@@ -1,4 +1,4 @@
-# UML Diagram for E-Commerce Platform
+# UML Diagram for E-Commerce Platform Data Models
 
 ## Complete UML Diagram
 
@@ -17,6 +17,20 @@ classDiagram
         +String name
     }
     
+    class UserIn {
+        +String email
+        +String password
+    }
+
+    class UserOut {
+        +String email
+        +String full_name
+        +Boolean is_active
+        +Boolean is_verified
+        +Integer role
+        +is_authorized()
+    }
+
     class User {
         +Integer id
         +String email
@@ -33,7 +47,6 @@ classDiagram
         +Integer id
         +Integer user_id
         +String phone
-        +String profile_picture
         +Date birth_date
         +Enum gender
         +JSON preferences
@@ -282,11 +295,15 @@ classDiagram
     }
     
     %% Relationships
+    BaseModel <|-- SoftDeleteMixin
+    BaseModel <|-- UserIn
+    BaseModel <|-- UserOut
     SoftDeleteMixin <|-- Product
     SoftDeleteMixin <|-- ProductVariant
     SoftDeleteMixin <|-- User
     SoftDeleteMixin <|-- Order
     
+    User "1" -- "1" Role
     User "1" -- "1" UserProfile
     User "1" -- "0..*" Address
     User "1" -- "0..*" Order
@@ -337,6 +354,25 @@ classDiagram
     }
     
     %% User Domain
+    class Role {
+        +Integer id
+        +String name
+    }
+    
+    class UserIn {
+        +String email
+        +String password
+    }
+
+    class UserOut {
+        +String email
+        +String full_name
+        +Boolean is_active
+        +Boolean is_verified
+        +Integer role
+        +is_authorized()
+    }
+    
     class User {
         +Integer id
         +String email
@@ -347,13 +383,12 @@ classDiagram
         +Integer role
         +DateTime created_at
         +DateTime updated_at
-    }
+    }    
     
     class UserProfile {
         +Integer id
         +Integer user_id
         +String phone
-        +String profile_picture
         +Date birth_date
         +Enum gender
         +JSON preferences
@@ -423,8 +458,12 @@ classDiagram
     }
     
     %% Relationships
+    BaseModel <|-- SoftDeleteMixin
     SoftDeleteMixin <|-- User
+    BaseModel <|-- UserIn
+    BaseModel <|-- UserOut
     
+    User "1" -- "1" Role
     User "1" -- "1" UserProfile
     User "1" -- "0..*" Address
     User "1" -- "0..*" Order
@@ -453,7 +492,6 @@ classDiagram
         +Integer id
         +Integer user_id
         +String phone
-        +String profile_picture
         +Date birth_date
         +Enum gender
         +JSON preferences

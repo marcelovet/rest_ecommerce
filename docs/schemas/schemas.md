@@ -7,6 +7,20 @@ erDiagram
         int id PK
         varchar name
     }
+
+    verification_tokens {
+        int id PK
+        int user_id FK
+        varchar token
+        timestamp expires_at
+    }
+
+    password_reset_tokens {
+        int id PK
+        int user_id FK
+        varchar token
+        timestamp expires_at
+    }
     
     users {
         int id PK
@@ -33,7 +47,6 @@ erDiagram
         int id PK
         int user_id FK
         varchar phone "defaults to NULL"
-        text profile_picture "defaults to NULL"
         date birth_date "defaults to NULL"
         enum gender "defaults to NULL"
         jsonb preferences "defaults to NULL"
@@ -348,6 +361,9 @@ erDiagram
     }
     
     %% Relationships
+    users ||--o| verification_tokens : "has"
+    users ||--o| password_reset_tokens : "has"
+    users ||--o{ roles : "has"
     users ||--o{ user_profiles : "has"
     users ||--o{ addresses : "has"
     users ||--o{ orders : "places"
@@ -397,6 +413,20 @@ erDiagram
         varchar name
     }
     
+    verification_tokens {
+        int id PK
+        int user_id FK
+        varchar token
+        timestamp expires_at
+    }
+
+    password_reset_tokens {
+        int id PK
+        int user_id FK
+        varchar token
+        timestamp expires_at
+    }
+    
     users {
         int id PK
         varchar email UK
@@ -422,7 +452,6 @@ erDiagram
         int id PK
         int user_id FK
         varchar phone "defaults to NULL"
-        text profile_picture "defaults to NULL"
         date birth_date "defaults to NULL"
         enum gender "defaults to NULL"
         jsonb preferences "defaults to NULL"
@@ -491,6 +520,8 @@ erDiagram
     }
 
     %% Relationships
+    users ||--o| verification_tokens : "has"
+    users ||--o| password_reset_tokens : "has"
     users ||--o{ user_profiles : "has"
     users ||--o{ addresses : "has"
     users ||--o{ orders : "places"
@@ -522,7 +553,6 @@ erDiagram
         int id PK
         int user_id FK
         varchar phone "defaults to NULL"
-        text profile_picture "defaults to NULL"
         date birth_date "defaults to NULL"
         enum gender "defaults to NULL"
         jsonb preferences "defaults to NULL"
@@ -623,6 +653,18 @@ erDiagram
 - `id`: integer PK (Primary Key) (**Unique identifier for each role**)
 - `name`: varchar(50) (**Name of the role**)
 
+#### verification_tokens
+- `id`: integer PK (Primary Key) (**Unique identifier for each verification token**)
+- `user_id`: integer FK (**Reference to the user who owns the token**)
+- `token`: varchar(255) (**Unique token for verification**)
+- `expires_at`: timestamp
+
+#### password_reset_tokens
+- `id`: integer PK (Primary Key) (**Unique identifier for each password reset token**)
+- `user_id`: integer FK (**Reference to the user who owns the token**)
+- `token`: varchar(255) (**Unique token for password reset**)
+- `expires_at`: timestamp
+
 #### users
 - `id`: integer PK (Primary Key) (**Unique identifier for each user**)
 - `email`: varchar(255) UK (Unique Key) (**User's email address, used for login and communication that must follow *RFC 5321 maximum length***)
@@ -639,7 +681,6 @@ erDiagram
 - `id`: integer PK (**Unique identifier for each profile**)
 - `user_id`: integer FK (Foreign Key) -> users.id (**Reference to the associated user**)
 - `phone`: varchar(20) NULL (**User's contact phone number**)
-- `profile_picture`: text NULL (**URL or path to user's profile image**)
 - `birth_date`: date NULL (**User's date of birth for age verification and birthday offers**)
 - `gender`: enum ('MALE', 'FEMALE', 'OTHER', 'PREFER_NOT_TO_SAY') NULL (**User's gender identity**)
 - `preferences`: jsonb NULL (**JSON containing user preferences (e.g., notification settings, theme)**)
