@@ -34,12 +34,29 @@ A comprehensive backend API for e-commerce platforms built with FastAPI, demonst
 - **FastAPI** - High-performance web framework
 - **SQLAlchemy** - ORM for database interactions
 - **Pydantic** - Data validation and settings management
-- **PostgreSQL** - Primary database
+- **Supabase** - Primary database and storage
 - **Redis** - Caching and session management
 - **JWT** - Secure authentication
 - **Docker** - Containerization
 - **Pytest** - Testing framework
 
 ---
+
+### Supabase Setup
+
+1. **Create Your .env File**
+  
+  Create a `.env` file in the supabase directory of the project (use env_example.env as a template).
+
+2. **Pull the images**
+   ```bash
+   cd supabase # Assuming you are in the project directory
+   docker compose pull
+   ```
+
+3. **Run the containers**
+   ```bash
+   docker compose up -d
+   ```
 
 This project is being created as a portfolio piece to demonstrate backend development capabilities with FastAPI and modern web technologies.
