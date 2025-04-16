@@ -58,5 +58,34 @@ A comprehensive backend API for e-commerce platforms built with FastAPI, demonst
    ```bash
    docker compose up -d
    ```
+### Backend Setup
+
+1. **Create a virtual environment**
+   ```bash
+   cd app # Assuming you are in the project directory
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Generate RSA keys**
+   ```bash
+   openssl genrsa -out private_key.pem 2048
+   openssl rsa -in private_key.pem -pubout -out public_key.pem
+   ```
+
+4. **Configure the .ini file**
+   ```bash
+   mkdir .envs
+   touch .envs/config.ini
+   ```
+
+   Add the same sections and values to `.env/config.ini` as in `config_example.ini`.
+
+5. **...**
 
 This project is being created as a portfolio piece to demonstrate backend development capabilities with FastAPI and modern web technologies.
