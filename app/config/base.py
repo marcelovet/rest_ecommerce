@@ -3,7 +3,7 @@ import sys
 from configparser import ConfigParser
 from pathlib import Path
 
-from exceptions import SectionNotFoundError
+from app.exceptions import SectionNotFoundError
 
 locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
 
