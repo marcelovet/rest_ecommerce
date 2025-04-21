@@ -1,22 +1,32 @@
 volumes:
-  sigqmv_local_postgres_data: {}
-  sigqmv_local_postgres_data_backups: {}
+  local_postgres_data: {}
+  local_postgres_data_backups: {}
 
 services:
-  postgres_local:
+  db:
     build:
       context: .
       dockerfile: ./compose/local/postgres/Dockerfile
-    image: sigqmv_local_postgres
-    container_name: sigqmv_local_postgres
+    image: local_postgres
+    container_name: local_postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
     volumes:
-      - sigqmv_local_postgres_data:/var/lib/postgresql/data
-      - sigqmv_local_postgres_data_backups:/backups
+      - local_postgres_data:/var/lib/postgresql/data
+      - local_postgres_data_backups:/backups
     ports:
-      - "15432:5432"
+      - "5432:5432"
     env_file:
-      - ./.envs/.local/.postgres
+      - ./.envs/.local/.env
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
   
 networks:
   default:
-    name: sigqmv_local_default
+    name: local_default
