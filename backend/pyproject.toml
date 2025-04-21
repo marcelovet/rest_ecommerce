@@ -1,3 +1,45 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "fastapi[standard]<1.0.0,>=0.114.2",
+    "python-multipart<1.0.0,>=0.0.7",
+    "email-validator<3.0.0.0,>=2.1.0.post1",
+    "passlib[bcrypt]<2.0.0,>=1.7.4",
+    "tenacity<9.0.0,>=8.2.3",
+    "pydantic>2.0",
+    "emails<1.0,>=0.6",
+    "jinja2<4.0.0,>=3.1.4",
+    "alembic<2.0.0,>=1.12.1",
+    "httpx<1.0.0,>=0.25.1",
+    "psycopg[binary]<4.0.0,>=3.1.13",
+    "sqlmodel<1.0.0,>=0.0.21",
+    # Pin bcrypt until passlib supports the latest
+    "bcrypt==4.0.1",
+    "pydantic-settings<3.0.0,>=2.2.1",
+    "sentry-sdk[fastapi]<2.0.0,>=1.40.6",
+    "pyjwt<3.0.0,>=2.8.0",
+    "python-dotenv==1.1.0",
+    "python-jose[cryptography]==3.4.0",
+    "sqlalchemy-stubs==0.4",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest<8.0.0,>=7.4.3",
+    "mypy<2.0.0,>=1.8.0",
+    "ruff<1.0.0,>=0.2.2",
+    "pre-commit<4.0.0,>=3.6.2",
+    "types-passlib<2.0.0.0,>=1.7.7.20240106",
+    "coverage<8.0.0,>=7.4.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 # ==== pytest ====
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -20,6 +62,8 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
+strict = true
+exclude = ["venv", ".venv", "alembic"]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -46,7 +90,8 @@ exclude = [
     "node_modules",
     "venv",
     "*/migrations/*.py",
-    "staticfiles/*"
+    "staticfiles/*",
+    "alembic",
 ]
 # Same as Django: https://github.com/cookiecutter/cookiecutter-django/issues/4792.
 line-length = 88
@@ -138,3 +183,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 force-single-line = true
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`.
+keep-runtime-typing = true

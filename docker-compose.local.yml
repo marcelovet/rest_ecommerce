@@ -1,0 +1,22 @@
+volumes:
+  sigqmv_local_postgres_data: {}
+  sigqmv_local_postgres_data_backups: {}
+
+services:
+  postgres_local:
+    build:
+      context: .
+      dockerfile: ./compose/local/postgres/Dockerfile
+    image: sigqmv_local_postgres
+    container_name: sigqmv_local_postgres
+    volumes:
+      - sigqmv_local_postgres_data:/var/lib/postgresql/data
+      - sigqmv_local_postgres_data_backups:/backups
+    ports:
+      - "15432:5432"
+    env_file:
+      - ./.envs/.local/.postgres
+  
+networks:
+  default:
+    name: sigqmv_local_default

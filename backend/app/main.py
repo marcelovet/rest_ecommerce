@@ -1,6 +1,6 @@
 from sqlalchemy import text
 
-from app.db.session import Session
+from db.session import Session
 
 # testing db access
 with Session() as session:
