@@ -34,7 +34,7 @@ A comprehensive backend API for e-commerce platforms built with FastAPI, demonst
 - **FastAPI** - High-performance web framework
 - **SQLAlchemy** - ORM for database interactions
 - **Pydantic** - Data validation and settings management
-- **Supabase** - Primary database and storage
+- **Postgres** - Primary database
 - **Redis** - Caching and session management
 - **JWT** - Secure authentication
 - **Docker** - Containerization
@@ -42,49 +42,36 @@ A comprehensive backend API for e-commerce platforms built with FastAPI, demonst
 
 ---
 
-### Supabase Setup
 
-1. **Create Your .env File**
-  
-  Create a `.env` file in the supabase directory of the project (use env_example.env as a template).
 
-2. **Pull the images**
-   ```bash
-   cd supabase # Assuming you are in the project directory
-   docker compose pull
-   ```
+## Backend Setup
 
-3. **Run the containers**
-   ```bash
-   docker compose up -d
-   ```
-### Backend Setup
+#### Requirements
+
+* [Docker](https://www.docker.com/).
+* [uv](https://docs.astral.sh/uv/) for Python package and environment management.
+
+By default, the dependencies are managed with [uv](https://docs.astral.sh/uv/)
 
 1. **Create a virtual environment**
    ```bash
-   cd app # Assuming you are in the project directory
-   python -m venv venv
+   cd backend # Assuming you are in the project directory
+   uv sync
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Generate RSA keys**
+2. **Generate RSA keys**
    ```bash
    openssl genrsa -out private_key.pem 2048
    openssl rsa -in private_key.pem -pubout -out public_key.pem
    ```
 
-4. **Configure the .ini file**
+3. **Configure the .ini file**
    ```bash
-   mkdir .envs
-   touch .envs/config.ini
+   touch config.ini
    ```
 
-   Add the same sections and values to `.env/config.ini` as in `config_example.ini`.
+   Add the same sections and values to `.env/config.ini` as in `ini_example`.
 
 5. **...**
 
