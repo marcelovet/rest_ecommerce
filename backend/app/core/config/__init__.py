@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.config import base
+from . import base
 
 
 class Settings:

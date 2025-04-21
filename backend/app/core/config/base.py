@@ -1,5 +1,4 @@
 import locale
-import sys
 from configparser import ConfigParser
 from pathlib import Path
 
@@ -7,7 +6,7 @@ from app.exceptions import SectionNotFoundError
 
 locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 
 def load_config(filename: Path, section: str):
@@ -26,7 +25,7 @@ def load_config(filename: Path, section: str):
     return config
 
 
-CONFIG_PATH = BASE_DIR / ".envs" / "config.ini"
+CONFIG_PATH = BASE_DIR / "config.ini"
 
 postgres_config = load_config(CONFIG_PATH, "postgresql")
 mail_config = load_config(CONFIG_PATH, "mail")
@@ -66,5 +65,3 @@ with (BASE_DIR / "public_key.pem").open("r") as f:
 JWT_ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
-
-sys.path.append(str(Path(__file__).parent.parent / "config"))
