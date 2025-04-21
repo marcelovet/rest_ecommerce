@@ -24,9 +24,9 @@ fileConfig(config.config_file_name)
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
-from app.db.base import Base # noqa
+from app.schemas.user import Base as Base1 # noqa
 from app.db.init_db import SQLALCHEMY_DATABASE_URI # noqa
-target_metadata = Base.metadata
+target_metadata = [Base1.metadata, ]
 
 def get_url():
     return str(SQLALCHEMY_DATABASE_URI)
