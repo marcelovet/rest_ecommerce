@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+alembic upgrade head
+
+python app/initial_data.py --noinput
+
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4

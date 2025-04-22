@@ -78,6 +78,11 @@ By default, the dependencies are managed with [uv](https://docs.astral.sh/uv/)
    alembic upgrade head
    ```
 
-5. **...**
+5. **add initial data to database**
+   ```bash
+   python app/initial_data.py
+   ```
+
+6. **...**
 
 This project is being created as a portfolio piece to demonstrate backend development capabilities with FastAPI and modern web technologies.

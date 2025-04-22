@@ -4,6 +4,9 @@ docs/etc.md
 # private and public keys
 *.pem
 
+# config files
+/compose/production/postgres/.postgres
+
 # Logs
 logs
 *.log

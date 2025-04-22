@@ -1,10 +1,9 @@
-import locale
 from configparser import ConfigParser
 from pathlib import Path
 
 from app.exceptions import SectionNotFoundError
 
-locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
+# locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -30,6 +29,7 @@ CONFIG_PATH = BASE_DIR / "config.ini"
 super_config = load_config(CONFIG_PATH, "admin")
 postgres_config = load_config(CONFIG_PATH, "postgresql")
 mail_config = load_config(CONFIG_PATH, "mail")
+redis_config = load_config(CONFIG_PATH, "redis")
 
 # admin user
 SUPERUSER_EMAIL = super_config["email"]
@@ -60,13 +60,18 @@ EMAIL_SSL_KEYFILE = mail_config.get("ssl_keyfile", None)
 EMAIL_SSL_CERTFILE = mail_config.get("ssl_certfile", None)
 MAIL_ADMIN = mail_config["admin"]
 
-# jwt
+# JWT config
 with (BASE_DIR / "private_key.pem").open("r") as f:
     PRIVATE_KEY = f.read()
 with (BASE_DIR / "public_key.pem").open("r") as f:
     PUBLIC_KEY = f.read()
-
-# JWT config
 JWT_ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+# redis
+REDIS_URL = f"redis://{redis_config['host']}:{redis_config['port']}/0"
+
+# API version
+API_VERSION_PREFIX = "/api/v1"
+API_VERSION = "1.0.0"

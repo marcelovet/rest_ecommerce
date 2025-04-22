@@ -31,6 +31,9 @@ class Settings:
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int
+    API_VERSION: str
+    API_VERSION_PREFIX: str
+    REDIS_URL: str
 
     def __init__(self):
         for setting in dir(base):

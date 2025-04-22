@@ -24,6 +24,8 @@ dependencies = [
     "python-dotenv==1.1.0",
     "python-jose[cryptography]==3.4.0",
     "sqlalchemy-stubs==0.4",
+    "celery==5.3.6",
+    "redis==5.0.1",
 ]
 
 [tool.uv]

@@ -1,0 +1,52 @@
+volumes:
+  postgres_data: {}
+  postgres_data_backups: {}
+  redis_data: {}
+
+x-fastapi-common: &fastapi-common
+    image: 'marcelo_vet/ecommerce_api:latest'
+    build:
+      context: .
+      dockerfile: ./compose/production/fastapi/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - ./compose/production/postgres/.postgres
+      - ./compose/production/fastapi/.fastapi
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: ./compose/production/postgres/Dockerfile
+    image: 'marcelo_vet/ecommerce_postgres:latest'
+    container_name: ecommerce_postgres
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_backups:/backups
+    env_file:
+      - ./compose/production/postgres/.postgres
+  
+  backend:
+    <<: *fastapi-common
+    container_name: ecommerce_fastapi
+    command: /app/start
+    ports:
+      - "8080:8000"
+  
+  redis:
+    image: docker.io/redis:6
+    volumes:
+      - redis_data:/data
+  
+  celeryworker:
+    <<: *fastapi-common
+    container_name: ecommerce_celeryworker
+    command: /app/start-celeryworker
+
+  celerybeat:
+    <<: *fastapi-common
+    container_name: ecommerce_celerybeat
+    command: /app/start-celerybeat
