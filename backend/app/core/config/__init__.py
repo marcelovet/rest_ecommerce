@@ -34,6 +34,8 @@ class Settings:
     API_VERSION: str
     API_VERSION_PREFIX: str
     REDIS_URL: str
+    CELERY_BROKER_URL: str
+    CELERY_RESULT_BACKEND: str
 
     def __init__(self):
         for setting in dir(base):

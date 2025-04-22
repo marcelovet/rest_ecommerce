@@ -41,10 +41,6 @@ COPY --chown=app:app ./compose/production/fastapi/celery/beat/start /app/start-c
 RUN sed -i 's/\r$//g' /app/start-celerybeat
 RUN chmod +x /app/start-celerybeat
 
-COPY --chown=app:app ./compose/production/fastapi/celery/flower/start /app/start-flower
-RUN sed -i 's/\r$//g' /app/start-flower
-RUN chmod +x /app/start-flower
-
 WORKDIR /app
 
 ENV PATH="/app/.venv/bin:$PATH"

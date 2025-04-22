@@ -71,6 +71,9 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # redis
 REDIS_URL = f"redis://{redis_config['host']}:{redis_config['port']}/0"
+# celery
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
 
 # API version
 API_VERSION_PREFIX = "/api/v1"
