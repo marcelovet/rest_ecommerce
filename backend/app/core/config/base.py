@@ -27,8 +27,13 @@ def load_config(filename: Path, section: str):
 
 CONFIG_PATH = BASE_DIR / "config.ini"
 
+super_config = load_config(CONFIG_PATH, "admin")
 postgres_config = load_config(CONFIG_PATH, "postgresql")
 mail_config = load_config(CONFIG_PATH, "mail")
+
+# admin user
+SUPERUSER_EMAIL = super_config["email"]
+SUPERUSER_PASSWORD = super_config["password"]
 
 # postgres database
 POSTGRES_HOST = postgres_config["host"]

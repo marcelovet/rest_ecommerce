@@ -1,4 +1,5 @@
 import enum
+from datetime import UTC
 from datetime import datetime
 
 from sqlalchemy import Boolean
@@ -74,12 +75,12 @@ class User(Base):
         default=0,
         doc="Reference to the user's role, determining permissions",
     )
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now(UTC))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=datetime.now(UTC),
+        onupdate=datetime.now(UTC),
     )
     deleted_at = Column(DateTime, nullable=True, doc="For soft delete")
 
@@ -131,12 +132,12 @@ class UserProfile(Base):
         nullable=True,
         doc="JSON containing user preferences (e.g., notification settings, theme)",
     )
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now(UTC))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=datetime.now(UTC),
+        onupdate=datetime.now(UTC),
     )
 
     # Relationships
@@ -188,12 +189,12 @@ class Address(Base):
         nullable=False,
         doc="Contact phone for delivery questions",
     )
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now(UTC))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=datetime.now(UTC),
+        onupdate=datetime.now(UTC),
     )
 
     # Relationships

@@ -5,6 +5,8 @@ from . import base
 
 class Settings:
     BASE_DIR: Path
+    SUPERUSER_EMAIL: str
+    SUPERUSER_PASSWORD: str
     POSTGRES_HOST: str
     POSTGRES_PORT: int
     POSTGRES_DB: str

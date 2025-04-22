@@ -57,7 +57,7 @@ By default, the dependencies are managed with [uv](https://docs.astral.sh/uv/)
    ```bash
    cd backend # Assuming you are in the project directory
    uv sync
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source .venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 2. **Generate RSA keys**
@@ -72,6 +72,11 @@ By default, the dependencies are managed with [uv](https://docs.astral.sh/uv/)
    ```
 
    Add the same sections and values to `.env/config.ini` as in `ini_example`.
+
+4. **Run alembic migrations**
+   ```bash
+   alembic upgrade head
+   ```
 
 5. **...**
 
