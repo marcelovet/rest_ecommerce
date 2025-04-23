@@ -1,0 +1,19 @@
+volumes:
+  postgres_data_local: {}
+  postgres_data_local_backups: {}
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: ./compose/production/postgres/Dockerfile
+    image: 'marcelo_vet/ecommerce_postgres:latest'
+    container_name: ecommerce_postgres_local
+    restart: always
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+      - postgres_data_local_backups:/backups
+    env_file:
+      - ./compose/production/postgres/.postgres
+    ports:
+      - "15432:5432"

@@ -45,7 +45,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, doc="Unique identifier for each user")
     email = Column(
-        String(255),
+        String(64 + 1 + 255),  # RFC 64 chars + @ + 255 chars
         unique=True,
         nullable=False,
         doc="User's email address, used for login and communication",

@@ -26,6 +26,8 @@ dependencies = [
     "sqlalchemy-stubs==0.4",
     "celery==5.3.6",
     "redis==5.0.1",
+    "pydantic-extra-types>=2.10.0",
+    "phonenumbers>=9.0.0",
 ]
 
 [tool.uv]
@@ -36,6 +38,7 @@ dev-dependencies = [
     "pre-commit<4.0.0,>=3.6.2",
     "types-passlib<2.0.0.0,>=1.7.7.20240106",
     "coverage<8.0.0,>=7.4.3",
+    "freezegun>=1.5.0",
 ]
 
 [build-system]
@@ -54,7 +57,7 @@ python_files = [
 
 # ==== Coverage ====
 [tool.coverage.run]
-omit = ["*/migrations/*", "*/tests/*", "*/config/*", "*/models/*_models.py"]
+omit = ["*/migrations/*", "*/tests/*", "*/config/*", "*/schemas/*"]
 
 # ==== mypy ====
 [tool.mypy]

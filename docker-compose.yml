@@ -28,6 +28,8 @@ services:
       - postgres_data_backups:/backups
     env_file:
       - ./compose/production/postgres/.postgres
+    ports:
+      - "5432:5432"
   
   backend:
     <<: *fastapi-common

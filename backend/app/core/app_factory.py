@@ -10,7 +10,7 @@ def create_app() -> FastAPI:
         version=st.API_VERSION,
         openapi_url=f"{st.API_VERSION_PREFIX}/openapi.json",
     )
-    app.celery_app = create_celery()
+    app.celery_app = create_celery()  # type: ignore[attr-defined]
 
     from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,6 +21,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    from app.api.router import api_router
+
+    app.include_router(api_router, prefix=st.API_VERSION_PREFIX)
 
     @app.get("/")
     async def root():
