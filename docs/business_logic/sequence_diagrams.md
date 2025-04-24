@@ -28,13 +28,13 @@ sequenceDiagram
         DB-->>AS: user_id
         AS->>DB: INSERT INTO user_profiles
         DB-->>AS: profile_id
-        AS->>AS: generate_verification_token(user_id)
+        AS->>AS: create_verification_token(user_id)
         AS->>DB: INSERT INTO verification_tokens (user_id, token, expires_at)
         DB-->>AS: token_id
         AS->>DB: COMMIT TRANSACTION
         AS->>ES: send_verification_email(email, verification_token)
         ES-->>AS: email_sent
-        AS->>AS: generate_limited_token(user_id)
+        AS->>AS: create_limited_token(user_id)
         AS-->>AE: {"success": true,<br>"token": limited_token,<br>"user": UserOut,<br>"message": "Verification email sent"}
         AE-->>C: 201 Created<br>(limitedToken, user,<br>verification pending message)
     else User exists
@@ -98,7 +98,7 @@ sequenceDiagram
         DB-->>US: User
         US-->>AS: User
         AS->>AS: User.is_verified -> False
-        AS->>AS: generate_verification_token(user_id)
+        AS->>AS: create_verification_token(user_id)
         AS->>DB: DELETE FROM verification_tokens WHERE user_id = ?
         AS->>DB: INSERT INTO verification_tokens (user_id, token, expires_at)
         DB-->>AS: token_id

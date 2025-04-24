@@ -7,6 +7,7 @@ classDiagram
     %% Base Class
     class SoftDeleteMixin {
         +DateTime deleted_at
+        +set_query()
         +delete()
         +restore()
     }

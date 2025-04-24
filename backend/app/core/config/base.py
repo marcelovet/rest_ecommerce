@@ -30,17 +30,27 @@ super_config = load_config(CONFIG_PATH, "admin")
 postgres_config = load_config(CONFIG_PATH, "postgresql")
 mail_config = load_config(CONFIG_PATH, "mail")
 redis_config = load_config(CONFIG_PATH, "redis")
+postgres_local_config = load_config(CONFIG_PATH, "postgresql_local")
+misc = load_config(CONFIG_PATH, "misc")
+app_type = misc.get("app_type", "local")
 
 # admin user
 SUPERUSER_EMAIL = super_config["email"]
 SUPERUSER_PASSWORD = super_config["password"]
 
 # postgres database
-POSTGRES_HOST = postgres_config["host"]
-POSTGRES_PORT = int(postgres_config["port"])
-POSTGRES_DB = postgres_config["database"]
-POSTGRES_USER = postgres_config["user"]
-POSTGRES_PASSWORD = postgres_config["password"]
+if app_type == "local":
+    POSTGRES_HOST = postgres_local_config["host"]
+    POSTGRES_PORT = int(postgres_local_config["port"])
+    POSTGRES_DB = postgres_local_config["database"]
+    POSTGRES_USER = postgres_local_config["user"]
+    POSTGRES_PASSWORD = postgres_local_config["password"]
+else:
+    POSTGRES_HOST = postgres_config["host"]
+    POSTGRES_PORT = int(postgres_config["port"])
+    POSTGRES_DB = postgres_config["database"]
+    POSTGRES_USER = postgres_config["user"]
+    POSTGRES_PASSWORD = postgres_config["password"]
 
 # references for brazilian ids
 CEP_LEN = 8
@@ -65,9 +75,12 @@ with (BASE_DIR / "private_key.pem").open("r") as f:
     PRIVATE_KEY = f.read()
 with (BASE_DIR / "public_key.pem").open("r") as f:
     PUBLIC_KEY = f.read()
+
 JWT_ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+VERIFICATION_TOKEN_EXPIRE_DAYS = 1
+LIMITED_TOKEN_EXPIRE_MINUTES = 60
 
 # redis
 REDIS_URL = f"redis://{redis_config['host']}:{redis_config['port']}/0"
@@ -75,6 +88,11 @@ REDIS_URL = f"redis://{redis_config['host']}:{redis_config['port']}/0"
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 
-# API version
+# frontend
+FRONTEND_URL = misc.get("front_end_url", "http://localhost:5173")
+
+# Backend
+DOMAIN = misc.get("domain", "http://localhost:8000")
+BACKEND_CORS_ORIGINS = ["http://localhost:8080", FRONTEND_URL]
 API_VERSION_PREFIX = "/api/v1"
 API_VERSION = "1.0.0"

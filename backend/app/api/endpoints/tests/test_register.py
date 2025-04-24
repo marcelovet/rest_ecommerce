@@ -210,7 +210,7 @@ def test_register_server_error(mock_auth_service, valid_register_form):
 
     # Assert
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert response.json() == {"detail": "Some server error"}
+    assert response.json() == {"detail": "An internal server error occurred"}
 
 
 def test_register_form_handling(mock_auth_service, mock_successful_register_response):

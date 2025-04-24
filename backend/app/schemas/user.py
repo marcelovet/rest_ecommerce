@@ -15,6 +15,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
+from app.models.user import UserOut
+
+from .soft_delete_mixin import SoftDeleteMixin
 
 
 # Enum types
@@ -39,8 +42,14 @@ class Role(Base):
     # Relationships
     users = relationship("User", back_populates="role")
 
+    def __repr__(self):
+        return f"<Role(id={self.id}, name={self.name})>"
 
-class User(Base):
+    def __str__(self):
+        return self.name
+
+
+class User(Base, SoftDeleteMixin):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, doc="Unique identifier for each user")
@@ -108,6 +117,33 @@ class User(Base):
     # orders = relationship("Order", back_populates="user")
     # reviews = relationship("ProductReview", back_populates="user")
     # carts = relationship("Cart", back_populates="user")
+
+    @property
+    def user_out(self):
+        return UserOut(
+            id=self.id,
+            email=self.email,
+            full_name=self.full_name,
+            is_active=self.is_active,
+            is_verified=self.is_verified,
+            role=self.role_id,  # type: ignore[assignment]
+        )
+
+    def __repr__(self):
+        return (
+            f"<User(id={self.id}, email={self.email}"
+            f", full_name={self.full_name}"
+            f", is_active={self.is_active}"
+            f", is_verified={self.is_verified}"
+            f", role_id={self.role_id}"
+            f", created_at={self.created_at}"
+            f", updated_at={self.updated_at}"
+            f", deleted_at={self.deleted_at}"
+            ")>"
+        )
+
+    def __str__(self):
+        return self.email
 
 
 class UserProfile(Base):

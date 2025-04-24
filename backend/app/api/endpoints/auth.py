@@ -17,24 +17,6 @@ auth_router = APIRouter(prefix="/auth", tags=["auth"])
     "/register",
     status_code=status.HTTP_201_CREATED,
     response_model=RegisterResponse,
-    responses={
-        status.HTTP_400_BAD_REQUEST: {
-            "model": ErrorResponse,
-            "description": "Bad request",
-        },
-        status.HTTP_409_CONFLICT: {
-            "model": ErrorResponse,
-            "description": "Registration conflict",
-        },
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {
-            "model": ErrorResponse,
-            "description": "Internal server error",
-        },
-        status.HTTP_422_UNPROCESSABLE_ENTITY: {
-            "model": ErrorResponse,
-            "description": "Unprocessable entity",
-        },
-    },
 )
 def register(
     form: Annotated[RegisterForm, Form()],
@@ -63,7 +45,9 @@ def register(
     if not register_result["success"]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=register_result["message"],
+            detail=ErrorResponse.create_from_code(
+                "INTERNAL_ERROR",
+            ).detail,
         )
     return {
         "message": "Verification pending",
