@@ -1,20 +1,30 @@
-class SectionNotFoundError(Exception):
+class APIError(Exception):
+    """
+    Base class for all exceptions raised by the API
+    """
+
+
+class SectionNotFoundError(APIError):
     pass
 
 
-class UserAlreadyExistsError(Exception):
+class UserAlreadyExistsError(APIError):
     pass
 
 
-class UserServiceError(Exception):
+class UserServiceError(APIError):
     pass
 
 
-class AuthServiceError(Exception):
+class AuthServiceError(APIError):
     pass
 
 
-class DatabaseError(Exception):
+class TokenRevokedError(AuthServiceError):
+    pass
+
+
+class DatabaseError(APIError):
     pass
 
 

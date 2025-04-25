@@ -5,16 +5,20 @@ from . import base
 
 class Settings:
     BASE_DIR: Path
+
     SUPERUSER_EMAIL: str
     SUPERUSER_PASSWORD: str
+
     POSTGRES_HOST: str
     POSTGRES_PORT: int
     POSTGRES_DB: str
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
+
     CEP_LEN: int
     CNPJ_LEN: int
     CPF_LEN: int
+
     MAIL_HOST: str
     MAIL_PORT: int
     MAIL_USER: str
@@ -26,16 +30,25 @@ class Settings:
     EMAIL_SSL_KEYFILE: str | None
     EMAIL_SSL_CERTFILE: str | None
     MAIL_ADMIN: str
+
     PRIVATE_KEY: str
     PUBLIC_KEY: str
+
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int
-    API_VERSION: str
-    API_VERSION_PREFIX: str
+    VERIFICATION_TOKEN_EXPIRE_DAYS: int
+    LIMITED_TOKEN_EXPIRE_MINUTES: int
+
     REDIS_URL: str
     CELERY_BROKER_URL: str
     CELERY_RESULT_BACKEND: str
+
+    FRONTEND_URL: str
+    DOMAIN: str
+    BACKEND_CORS_ORIGINS: list[str]
+    API_VERSION: str
+    API_VERSION_PREFIX: str
 
     def __init__(self):
         for setting in dir(base):

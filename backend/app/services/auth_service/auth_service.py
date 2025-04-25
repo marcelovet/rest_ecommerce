@@ -21,9 +21,8 @@ from app.models.request_models import RegisterForm
 from app.models.response_models import TokenData
 from app.models.user import UserOut
 from app.schemas.user import VerificationToken
-
-from .tasks import send_verification_email
-from .user_service import UserService
+from app.services.tasks import send_verification_email
+from app.services.user_service import UserService
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
