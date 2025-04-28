@@ -128,13 +128,6 @@ def create_config_ini():
     config["postgresql"]["user"] = user
     config["postgresql"]["password"] = pwd
 
-    config["postgresql_local"] = {}
-    config["postgresql_local"]["host"] = "localhost"
-    config["postgresql_local"]["port"] = "15432"
-    config["postgresql_local"]["database"] = database
-    config["postgresql_local"]["user"] = user
-    config["postgresql_local"]["password"] = pwd
-
     # Mail section
     config["mail"] = {}
     config["mail"]["host"] = input("SMTP host [smtp_host]: ") or "smtp_host"
@@ -188,9 +181,33 @@ def create_config_ini():
         input("Set Front-End domain [localhost:5173]: ") or "localhost:5173"
     )
     should_be_local = bool(
-        yes_no("Configure app in development mode? (yes/no) [yes]: ", 1),
+        yes_no("Configure app for development mode? (yes/no) [yes]: ", 1),
     )
     config["misc"]["app_type"] = "local" if should_be_local else "production"
+
+    if should_be_local:
+        config["devel_mode"] = {}
+        config["devel_mode"]["redis_host"] = (
+            input("Redis development host [localhost]: ") or "localhost"
+        )
+        config["devel_mode"]["redis_port"] = str(
+            get_int_input(
+                "Redis port in development (make sure to expose redis on this port "
+                "on docker-compose-local.yml, if you not set to default) [6379]: ",
+                6379,
+            ),
+        )
+        config["devel_mode"]["pg_host"] = (
+            input("Postgres development host [localhost]: ") or "localhost"
+        )
+        config["devel_mode"]["pg_port"] = str(
+            get_int_input(
+                "Postgres port in development (make sure to expose postgres on "
+                "this port on docker-compose-local.yml, if you not set to "
+                "default) [15432]: ",
+                15432,
+            ),
+        )
 
     # Write config to file
     with (BASE_DIR / "config.ini").open("w") as configfile:

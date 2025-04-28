@@ -30,28 +30,28 @@ super_config = load_config(CONFIG_PATH, "admin")
 postgres_config = load_config(CONFIG_PATH, "postgresql")
 mail_config = load_config(CONFIG_PATH, "mail")
 redis_config = load_config(CONFIG_PATH, "redis")
-postgres_local_config = load_config(CONFIG_PATH, "postgresql_local")
 jwt_config = load_config(CONFIG_PATH, "jwt")
 misc = load_config(CONFIG_PATH, "misc")
 app_type = misc.get("app_type", "local")
+
+if app_type == "local":
+    devel_config = load_config(CONFIG_PATH, "devel_mode")
 
 # admin user
 SUPERUSER_EMAIL = super_config["email"]
 SUPERUSER_PASSWORD = super_config["password"]
 
 # postgres database
+POSTGRES_DB = postgres_config["database"]
+POSTGRES_USER = postgres_config["user"]
+POSTGRES_PASSWORD = postgres_config["password"]
+
 if app_type == "local":
-    POSTGRES_HOST = postgres_local_config["host"]
-    POSTGRES_PORT = int(postgres_local_config["port"])
-    POSTGRES_DB = postgres_local_config["database"]
-    POSTGRES_USER = postgres_local_config["user"]
-    POSTGRES_PASSWORD = postgres_local_config["password"]
+    POSTGRES_HOST = devel_config["pg_host"]
+    POSTGRES_PORT = int(devel_config["pg_port"])
 else:
     POSTGRES_HOST = postgres_config["host"]
     POSTGRES_PORT = int(postgres_config["port"])
-    POSTGRES_DB = postgres_config["database"]
-    POSTGRES_USER = postgres_config["user"]
-    POSTGRES_PASSWORD = postgres_config["password"]
 
 # references for brazilian ids
 CEP_LEN = 8
@@ -85,8 +85,12 @@ LIMITED_TOKEN_EXPIRE = int(jwt_config["limited_token_expire"])
 RESET_PASSWORD_TOKEN_EXPIRE = int(jwt_config["reset_password_expire"])
 
 # REDIS
-REDIS_HOST = redis_config["host"]
-REDIS_PORT = int(redis_config["port"])
+if app_type == "local":
+    REDIS_HOST = devel_config["redis_host"]
+    REDIS_PORT = int(devel_config["redis_port"])
+else:
+    REDIS_HOST = redis_config["host"]
+    REDIS_PORT = int(redis_config["port"])
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 # celery
 CELERY_URL = f"{REDIS_URL}/{redis_config['celery_db']}"

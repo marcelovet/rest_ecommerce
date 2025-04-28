@@ -23,3 +23,5 @@ services:
     image: docker.io/redis:6
     volumes:
       - redis_data_local:/data
+    ports:
+    - "6379:6379"
