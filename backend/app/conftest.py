@@ -8,7 +8,9 @@ from sqlalchemy.pool import StaticPool
 from app.api.dependencies import get_db
 from app.core.config import settings as st
 from app.main import app
+from app.models.response_models import AccessTokenData
 from app.models.response_models import TokenData
+from app.models.response_models import TokenType
 from app.schemas import BaseUser
 from app.schemas import User
 
@@ -75,4 +77,16 @@ def valid_jwt_token():
 @pytest.fixture(scope="session")
 def token_data_instance(valid_jwt_token):
     """Fixture providing a valid TokenData instance."""
-    return TokenData(access_token=valid_jwt_token)
+    return TokenData(token=valid_jwt_token, token_type=TokenType.ACCESS)
+
+
+@pytest.fixture
+def access_token_data_instance(token_data_instance):
+    """Fixture providing a valid AccessTokenData instance."""
+    return AccessTokenData(
+        access_token=token_data_instance,
+        refresh_token=TokenData(
+            token=token_data_instance.token,
+            token_type=TokenType.REFRESH,
+        ),
+    )

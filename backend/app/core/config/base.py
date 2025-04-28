@@ -31,6 +31,7 @@ postgres_config = load_config(CONFIG_PATH, "postgresql")
 mail_config = load_config(CONFIG_PATH, "mail")
 redis_config = load_config(CONFIG_PATH, "redis")
 postgres_local_config = load_config(CONFIG_PATH, "postgresql_local")
+jwt_config = load_config(CONFIG_PATH, "jwt")
 misc = load_config(CONFIG_PATH, "misc")
 app_type = misc.get("app_type", "local")
 
@@ -76,23 +77,42 @@ with (BASE_DIR / "private_key.pem").open("r") as f:
 with (BASE_DIR / "public_key.pem").open("r") as f:
     PUBLIC_KEY = f.read()
 
-JWT_ALGORITHM = "RS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
-VERIFICATION_TOKEN_EXPIRE_DAYS = 1
-LIMITED_TOKEN_EXPIRE_MINUTES = 60
+JWT_ALGORITHM = jwt_config["algorithm"]
+ACCESS_TOKEN_EXPIRE = int(jwt_config["access_token_expire"])
+REFRESH_TOKEN_EXPIRE = int(jwt_config["refresh_token_expire"])
+VERIFICATION_TOKEN_EXPIRE = int(jwt_config["verification_token_expire"])
+LIMITED_TOKEN_EXPIRE = int(jwt_config["limited_token_expire"])
+RESET_PASSWORD_TOKEN_EXPIRE = int(jwt_config["reset_password_expire"])
 
-# redis
-REDIS_URL = f"redis://{redis_config['host']}:{redis_config['port']}/0"
+# REDIS
+REDIS_HOST = redis_config["host"]
+REDIS_PORT = int(redis_config["port"])
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 # celery
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_URL = f"{REDIS_URL}/{redis_config['celery_db']}"
+CELERY_BROKER_URL = CELERY_RESULT_BACKEND = CELERY_URL
+# repository
+REPOSITORY_HOST = REDIS_HOST
+REPOSITORY_DB = int(redis_config["repository_db"])
+REPOSITORY_URL = f"{REDIS_URL}/{REPOSITORY_DB}"
+# cache
+CACHE_HOST = REDIS_HOST
+CACHE_DB = int(redis_config["cache_db"])
+CACHE_URL = f"{REDIS_URL}/{CACHE_DB}"
 
 # frontend
-FRONTEND_URL = misc.get("front_end_url", "http://localhost:5173")
+FRONTEND_DOMAIN = misc.get("front_end", "localhost:5173")
+FRONTEND_URL = f"http://{FRONTEND_DOMAIN}"
 
 # Backend
-DOMAIN = misc.get("domain", "http://localhost:8000")
-BACKEND_CORS_ORIGINS = ["http://localhost:8080", FRONTEND_URL]
-API_VERSION_PREFIX = "/api/v1"
-API_VERSION = "1.0.0"
+API_VERSION = misc.get("api_version", "1.0.0")
+API_VERSION_PREFIX = f"/api/v{API_VERSION.split('.')[0]}"
+BACKEND_DOMAIN = misc.get("domain", "localhost:8000")
+BACKEND_URL = f"http://{BACKEND_DOMAIN}"
+BACKEND_API_URL = f"{BACKEND_URL}{API_VERSION_PREFIX}"
+BACKEND_CORS_ORIGINS = [
+    "http://localhost:8080",
+    FRONTEND_URL,
+    BACKEND_URL,
+    BACKEND_API_URL,
+]

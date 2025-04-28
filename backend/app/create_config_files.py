@@ -1,18 +1,101 @@
-#!/usr/bin/env python3
 import configparser
 import getpass
 import secrets
 import string
+from pathlib import Path
 
-from app.core.config import settings as st
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-DIR_PATH = st.BASE_DIR.parent
+DIR_PATH = BASE_DIR.parent
 
 
 def generate_secure_password(length=32):
     """Generate a secure random password."""
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def get_int_input(prompt: str, default: int | None = None) -> int | None:
+    """Get an integer input from the user."""
+    result = default
+    while True:
+        value = input(prompt)
+        if value == "":
+            break
+        try:
+            result = int(value)
+            break
+        except ValueError:
+            print("Invalid input. Please enter an integer.")  # noqa: T201
+    return result
+
+
+def yes_no(prompt: str, default: int) -> int:
+    """Get a yes/no input from the user."""
+    result = default
+    while True:
+        value = input(prompt)
+        if value == "":
+            break
+        if value.lower() == "yes":
+            result = 1
+            break
+        if value.lower() == "no":
+            result = 0
+            break
+        print(
+            "Invalid input. Please enter 'yes', 'no' "
+            "or leave empty to accept the default.",
+        )
+    return result
+
+
+def set_time(var: str, default_time: int, default_time_type: str) -> int:
+    """Set time variable"""
+    time_types = {
+        "s": 1,
+        "m": 60,
+        "h": 60 * 60,
+        "d": 24 * 60 * 60,
+    }
+    time_type = default_time_type
+    time = default_time
+    while True:
+        input_msg = f"Chose {var} time type (s/m/h/d) [{default_time_type}]: "
+        time_type = input(input_msg)
+        if time_type == "":
+            time_type = default_time_type
+            break
+        if time_type not in time_types:
+            print("Invalid time type. Please enter 's', 'm', 'h' or 'd'.")  # noqa: T201
+            continue
+        break
+    while True:
+        input_msg = f"Set {var} time [{default_time}]: "
+        time_input = input(input_msg)
+        if time_input == "":
+            break
+        try:
+            time_input = int(time)
+            time = time_input
+            break
+        except ValueError:
+            print("Invalid input. Please enter an integer.")  # noqa: T201
+    return time * time_types[time_type]
+
+
+def set_api_version(default_version: str) -> str:
+    """Set API version."""
+    while True:
+        input_msg = f"Set API version [{default_version}]: "
+        version = input(input_msg)
+        if version == "":
+            version = default_version
+            break
+        if version.replace(".", "").isdigit():
+            break
+        print("Invalid input. Please enter a valid API version.")  # noqa: T201
+    return version
 
 
 def create_config_ini():
@@ -30,39 +113,87 @@ def create_config_ini():
     # PostgreSQL section
     config["postgresql"] = {}
     config["postgresql"]["host"] = input("PostgreSQL host [postgres]: ") or "postgres"
-    config["postgresql"]["port"] = input("PostgreSQL port [5432]: ") or "5432"
-    config["postgresql"]["database"] = (
+    config["postgresql"]["port"] = str(
+        get_int_input("PostgreSQL port [5432]: ", 5432),
+    )
+    database = (
         input("PostgreSQL database [ecommerce_postgres]: ") or "ecommerce_postgres"
     )
-    config["postgresql"]["user"] = input(
+    user = input(
         "PostgreSQL user (leave empty for random): ",
     ) or generate_secure_password(24)
     pg_password = getpass.getpass("PostgreSQL password (leave empty for random): ")
-    config["postgresql"]["password"] = (
-        pg_password if pg_password else generate_secure_password()
-    )
+    pwd = pg_password if pg_password else generate_secure_password()
+    config["postgresql"]["database"] = database
+    config["postgresql"]["user"] = user
+    config["postgresql"]["password"] = pwd
+
+    config["postgresql_local"] = {}
+    config["postgresql_local"]["host"] = "localhost"
+    config["postgresql_local"]["port"] = "15432"
+    config["postgresql_local"]["database"] = database
+    config["postgresql_local"]["user"] = user
+    config["postgresql_local"]["password"] = pwd
 
     # Mail section
     config["mail"] = {}
     config["mail"]["host"] = input("SMTP host [smtp_host]: ") or "smtp_host"
-    config["mail"]["port"] = input("SMTP port [5432]: ") or "5432"
+    config["mail"]["port"] = str(
+        get_int_input("SMTP port [587]: ", 587),
+    )
     config["mail"]["user"] = input("SMTP user [smtp_user]: ") or "smtp_user"
     config["mail"]["password"] = (
         getpass.getpass("SMTP password [smtp_password]: ") or "smtp_password"
     )
     config["mail"]["from"] = input("Mail from address [smtp_user]: ") or "smtp_user"
-    config["mail"]["timeout"] = input("Mail timeout [20]: ") or "20"
-    config["mail"]["use_tls"] = input("Use TLS (1/0) [1]: ") or "1"
-    config["mail"]["fail_silently"] = input("Fail silently (1/0) [0]: ") or "0"
+    config["mail"]["timeout"] = str(set_time("Mail timeout", 20, "s"))
+    config["mail"]["use_tls"] = str(yes_no("Use TLS (yes/no) [yes]: ", 1))
+    config["mail"]["fail_silently"] = str(yes_no("Fail silently (yes/no) [no]: ", 0))
     config["mail"]["admin"] = input("Mail admin [smtp_user]: ") or "smtp_user"
 
     # Redis section
     config["redis"] = {}
-    config["redis"]["host"] = input("Redis host [redis]: ") or "redis"
-    config["redis"]["port"] = input("Redis port [6379]: ") or "6379"
+    config["redis"]["port"] = str(6379)
+    config["redis"]["host"] = "redis"
+    config["redis"]["celery_db"] = str(0)
+    config["redis"]["repository_db"] = str(1)
+    config["redis"]["cache_db"] = str(2)
+
+    # JWT section
+    config["jwt"] = {}
+    config["jwt"]["algorithm"] = "RS256"
+    config["jwt"]["access_token_expire"] = str(
+        set_time("Access Token expiration", 30, "m"),
+    )
+    config["jwt"]["refresh_token_expire"] = str(
+        set_time("Refresh Token expiration", 7, "d"),
+    )
+    config["jwt"]["verification_token_expire"] = str(
+        set_time("Verification Token expiration", 1, "d"),
+    )
+    config["jwt"]["limited_token_expire"] = str(
+        set_time("Limited Token expiration", 30, "m"),
+    )
+    config["jwt"]["reset_password_expire"] = str(
+        set_time("Reset Password Token expiration", 10, "m"),
+    )
+
+    # MISC
+    config["misc"] = {}
+    config["misc"]["api_version"] = set_api_version("1.0.0")
+    config["misc"]["domain"] = (
+        input("Set Back-End domain [localhost:8000]: ") or "localhost:8000"
+    )
+    config["misc"]["front_end"] = (
+        input("Set Front-End domain [localhost:5173]: ") or "localhost:5173"
+    )
+    should_be_local = bool(
+        yes_no("Configure app in development mode? (yes/no) [yes]: ", 1),
+    )
+    config["misc"]["app_type"] = "local" if should_be_local else "production"
 
     # Write config to file
-    with (st.BASE_DIR / "config.ini").open("w") as configfile:
+    with (BASE_DIR / "config.ini").open("w") as configfile:
         config.write(configfile)
 
     print("✅ config.ini created successfully")
@@ -73,7 +204,7 @@ def create_fastapi_env(config):
     """Create .fastapi environment file."""
     print("\n=== Creating .fastapi ===")
 
-    content = f"REDIS_URL=redis://{config['redis']['host']}:{config['redis']['port']}/0"
+    content = f"REDIS_URL=redis://{config['redis']['host']}:{config['redis']['port']}/{config['redis']['celery_db']}"
 
     path = DIR_PATH / "compose" / "production" / "fastapi" / ".fastapi"
     with path.open("w") as f:

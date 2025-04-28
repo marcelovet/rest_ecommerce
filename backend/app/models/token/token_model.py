@@ -16,6 +16,7 @@ class TokenType(str, Enum):
     VERIFY = "vt"
     PASSWORD_RESET = "pt"  # noqa: S105
     REFRESH = "rt"
+    ACTIVATE = "ac"
 
 
 class TokenModel(BaseModel):

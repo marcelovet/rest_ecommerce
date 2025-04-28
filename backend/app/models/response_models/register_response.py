@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from pydantic import Field
 
-from app.models.response_models.token import TokenData
+from app.models.response_models.token_response import TokenData
 from app.models.user.user_out import UserOut
 
 

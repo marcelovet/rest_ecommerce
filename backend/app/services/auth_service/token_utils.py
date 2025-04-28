@@ -1,22 +1,23 @@
-import inspect
 import json
 import logging
 import re
 import time
+import traceback
 import uuid
-from collections.abc import Callable
 from datetime import UTC
 from datetime import datetime
-from functools import wraps
 from typing import Any
 
 import jwt
 from fastapi import Request
 from fastapi import Response
+from fastapi import status
 from fastapi.responses import JSONResponse
 from jwt import PyJWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
+
+from app.core.config import settings as st
 
 # Configure structured logger with proper formatting
 logger = logging.getLogger("token_security")
@@ -248,183 +249,6 @@ class TokenLogger:
         # 3. Send alerts to security team
 
 
-def monitor_token_operation(event_type: str):
-    """
-    Advanced decorator for monitoring token operations with security analytics.
-
-    Args:
-        event_type: Type of token event (create, verify, revoke, refresh, etc.)
-
-    Example:
-        @app.post("/auth/token")
-        @monitor_token_operation("create")
-        async def create_token(request: Request, ...):
-            # Function implementation
-    """
-
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            start_time = time.time()
-
-            # Extract request if available using introspection
-            request: Request | None = None
-            for arg in args:
-                if isinstance(arg, Request):
-                    request = arg
-                    break
-
-            # Also check kwargs for request
-            if not request and "request" in kwargs:
-                request = kwargs["request"]
-
-            # Get client info if request is available
-            client_ip = user_agent = None
-            if request is not None:
-                client_ip = request.client.host if request.client else None
-                user_agent = request.headers.get("user-agent", "unknown")
-
-            # Extract token details from kwargs or try to infer from signatures
-            user_id = kwargs.get("user_id")
-            token_type = kwargs.get("token_type", "unknown")
-            jti = kwargs.get("jti")
-
-            # Try to extract token info from token_data if available
-            token_data = kwargs.get("token_data")
-            if token_data and isinstance(token_data, dict):
-                if not user_id and "sub" in token_data:
-                    user_id = token_data["sub"]
-                    if user_id and user_id.startswith("user:"):
-                        user_id = user_id.replace("user:", "")
-
-                if not jti and "jti" in token_data:
-                    jti = token_data["jti"]
-
-            # Generate context map with callable parameters for detailed logging
-            context = {}
-            signature = inspect.signature(func)
-            for param_name in signature.parameters:
-                if param_name in kwargs and param_name not in ["request", "password"]:
-                    context[param_name] = kwargs[param_name]
-
-            pre_op_details = {
-                "operation": "start",
-                "phase": "attempt",
-                "context": context,
-            }
-
-            # For security-sensitive operations, log attempts
-            if event_type in [
-                "create",
-                "verify",
-                "revoke",
-                "refresh",
-                "login",
-                "logout",
-            ]:
-                TokenLogger.log_token_event(
-                    f"{event_type}_attempt",
-                    user_id,
-                    token_type,
-                    jti,
-                    client_ip,
-                    user_agent,
-                    pre_op_details,
-                )
-
-            result = None
-            try:
-                result = (
-                    await func(*args, **kwargs)
-                    if inspect.iscoroutinefunction(func)
-                    else func(*args, **kwargs)
-                )
-
-                # Update JTI from result if available
-                if isinstance(result, dict):
-                    if not jti and "jti" in result:
-                        jti = result["jti"]
-                    elif (
-                        not jti
-                        and "token_data" in result
-                        and isinstance(result["token_data"], dict)
-                    ):
-                        jti = result["token_data"].get("jti")
-
-                # Extract user_id from result if not already available
-                if not user_id and isinstance(result, dict):
-                    if "user_id" in result:
-                        user_id = result["user_id"]
-                    elif "user" in result and isinstance(result["user"], dict):
-                        user_id = result["user"].get("id")
-
-                duration_ms = round((time.time() - start_time) * 1000)
-                # Post-operation success logging with result summary
-                result_summary = {}
-                if isinstance(result, dict):
-                    # Create safe summary of result without sensitive data
-                    result_summary = {
-                        k: v
-                        for k, v in result.items()
-                        if k
-                        not in ["token", "access_token", "refresh_token", "password"]
-                        and not isinstance(v, (bytes, bytearray))
-                    }
-
-                post_op_details = {
-                    "operation": "complete",
-                    "status": "success",
-                    "duration_ms": duration_ms,
-                    "result_summary": result_summary,
-                }
-
-                TokenLogger.log_token_event(
-                    event_type,
-                    user_id,
-                    token_type,
-                    jti,
-                    client_ip,
-                    user_agent,
-                    post_op_details,
-                    duration_ms,
-                    True,
-                )
-
-            except Exception as e:
-                duration_ms = round((time.time() - start_time) * 1000)
-                # Detailed error logging with stack trace for debugging
-                error_details = {
-                    "operation": "failed",
-                    "status": "error",
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "duration_ms": duration_ms,
-                }
-
-                # Add stack trace for internal server errors
-                import traceback
-
-                error_details["stack_trace"] = traceback.format_exc()
-                TokenLogger.log_token_event(
-                    f"{event_type}_error",
-                    user_id,
-                    token_type,
-                    jti,
-                    client_ip,
-                    user_agent,
-                    error_details,
-                    duration_ms,
-                    False,
-                )
-
-                raise
-            return result
-
-        return wrapper
-
-    return decorator
-
-
 class TokenSecurityMiddleware(BaseHTTPMiddleware):
     """Middleware for monitoring token operations across the application"""
 
@@ -433,192 +257,131 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
         app,
         jwt_secret_key: str,
         token_endpoints: dict[str, str] | None = None,
+        excluded_paths: list[str] | None = None,
     ):
         super().__init__(app)
         self.token_endpoints = token_endpoints or {
-            r"/auth/token": "create",
-            r"/auth/refresh": "refresh",
-            r"/auth/revoke": "revoke",
-            r"/auth/verify": "verify",
-            r"/auth/logout": "logout",
-            r"/auth/sessions": "view_sessions",
+            f"{st.API_VERSION_PREFIX}/auth/token": "create",
+            f"{st.API_VERSION_PREFIX}/auth/refresh": "refresh",
+            f"{st.API_VERSION_PREFIX}/auth/revoke": "revoke",
+            f"{st.API_VERSION_PREFIX}/auth/verify": "verify",
+            f"{st.API_VERSION_PREFIX}/auth/logout": "logout",
+            f"{st.API_VERSION_PREFIX}/auth/sessions": "view_sessions",
+            r"/api/v\d+/auth/.*": "auth_operation",
         }
-        # Compile regex patterns for faster matching
-        self.token_endpoint_patterns = {
+
+        self.exact_path_mapping = {
+            path: event_type
+            for path, event_type in self.token_endpoints.items()
+            if not any(c in path for c in ".*?+()[]{}^$")
+        }
+        self.regex_patterns = {
             re.compile(pattern): event_type
             for pattern, event_type in self.token_endpoints.items()
+            if any(c in pattern for c in ".*?+()[]{}^$")
         }
+
+        # Excluded paths for faster skipping
+        self.excluded_paths = set(
+            excluded_paths
+            or [
+                "/docs",
+                "/redoc",
+                "/openapi.json",
+                "/favicon.ico",
+                "/static/",
+                "/health",
+                "/metrics",
+            ],
+        )
+
+        self.excluded_regex = [
+            re.compile(path)
+            for path in self.excluded_paths
+            if any(c in path for c in ".*?+()[]{}^$")
+        ]
+
         self.jwt_secret_key = jwt_secret_key
-
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        # Skip excluded paths
-        path = request.url.path
-        if all(pattern.match(path) is None for pattern in self.token_endpoint_patterns):
-            return await call_next(request)
-
-        event_type = self._get_event_type(path)
-        start_time = time.time()
-
-        client_ip = request.client.host if request.client else None
-        user_agent = request.headers.get("User-Agent", "unknown")
-
-        token = await self._extract_token_from_request(request, event_type)
-        jti, user_id = (
-            self._extract_token_info_from_token(token)
-            if token
-            else ("unknown", "unknown")
-        )
-        token_type = event_type
-        request_id = str(uuid.uuid4())
-        event_prefix = event_type if event_type != "unknown" else "request"
-
-        # Log request attempt
-        request_details = {
-            "operation": "start",
-            "phase": "request",
-            "request_id": request_id,
-            "method": request.method,
-            "path": path,
-            "query_params": str(request.query_params),
+        self.log_data = {
+            "event_type": "unknown",
+            "user_id": "unknown",
+            "token_type": "unknown",
+            "jti": "unknown",
+            "client_ip": None,
+            "user_agent": None,
+            "details": None,
+            "duration_ms": None,
+            "success": True,
         }
+        self.request_id = str(uuid.uuid4())
+        self.event_prefix = "request"
+        self.start_time = 0
 
-        TokenLogger.log_token_event(
-            f"{event_prefix}_attempt",
-            user_id,
-            token_type,
-            jti,
-            client_ip,
-            user_agent,
-            request_details,
-        )
-
-        # Process the request and capture response
-        response = None
-        success = True
-        error_detail = None
-        status_code = 200
-
-        try:
-            response = await call_next(request)
-            status_code = response.status_code
-
-            # Check if response status indicates success
-            if status_code >= 400:
-                success = False
-                # Try to extract error detail from response
-                if isinstance(response, JSONResponse):
-                    try:
-                        response_body = response.body
-                        response_data = json.loads(response_body)
-                        error_detail = response_data.get("detail")
-                    except:
-                        pass
-        except Exception as e:
-            # Capture unhandled exceptions
-            success = False
-            error_detail = str(e)
-            status_code = HTTP_500_INTERNAL_SERVER_ERROR
-
-            # Create a new response for the unhandled exception
-            response = JSONResponse(
-                content={"detail": "Internal server error"},
-                status_code=status_code,
-            )
-
-        # Calculate duration
-        duration_ms = round((time.time() - start_time) * 1000)
-
-        # Extract token info from response if possible
-        response_token_info = await self._extract_token_info_from_response(response)
-
-        # Use response token info if we couldn't get it from request
-        if response_token_info:
-            if not user_id and "user_id" in response_token_info:
-                user_id = response_token_info["user_id"]
-            if not jti and "jti" in response_token_info:
-                jti = response_token_info["jti"]
-            if "token_type" in response_token_info:
-                token_type = response_token_info["token_type"]
-
-        # Create response details for logging
-        response_details = {
-            "operation": "complete" if success else "failed",
-            "phase": "response",
-            "request_id": request_id,
-            "status_code": status_code,
-            "duration_ms": duration_ms,
-        }
-
-        # Add error details if present
-        if not success:
-            response_details["error"] = (
-                error_detail if error_detail else "Unknown error"
-            )
-
-            # Add stack trace for 500 errors
-            if status_code >= 500:
-                response_details["stack_trace"] = traceback.format_exc()
-
-        # Log response
-        TokenLogger.log_token_event(
-            event_prefix if success else f"{event_prefix}_error",
-            user_id,
-            token_type,
-            jti,
-            client_ip,
-            user_agent,
-            response_details,
-            duration_ms,
-            success,
-        )
-
-        return response
+    def _should_skip_path(self, path: str) -> bool:
+        """Fast check if path should be skipped"""
+        if path in self.excluded_paths:
+            return True
+        return any(pattern.match(path) for pattern in self.excluded_regex)
 
     def _get_event_type(self, path: str) -> str:
         """Determine the token event type based on the request path"""
-        for pattern, event_type in self.token_endpoint_patterns.items():
+        if path in self.exact_path_mapping:
+            return self.exact_path_mapping[path]
+        for pattern, event_type in self.regex_patterns.items():
             if pattern.match(path):
                 return event_type
         return "unknown"
 
+    async def _buffer_request_body(self, request: Request) -> bytes:
+        """Buffer the request body for reuse"""
+        body = await request.body()
+        setattr(request, "_body", body)  # noqa: B010
+        return body
+
     async def _extract_token_from_request(
-        self, request: Request, event_type: str
+        self,
+        request: Request,
     ) -> str | None:
         """Extract token from request if possible"""
         token = None
         auth_header = request.headers.get("Authorization")
         if auth_header and " " in auth_header:
             _, token = auth_header.split(" ", 1)
+            return token
 
-        # For token refresh/verify endpoints, look for token in request body
-        token_from_body = None
-        if not token and event_type in ["refresh", "verify"]:
-            try:
-                body_bytes = await request.body()
-                # Try to parse as JSON
+        content_type = request.headers.get("Content-Type", "")
+
+        if self.log_data["event_type"] in ["refresh", "verify"] and (
+            "application/json" in content_type
+            or "application/x-www-form-urlencoded" in content_type
+        ):
+            body_bytes = await self._buffer_request_body(request)
+
+            if "application/json" in content_type:
                 try:
-                    body = json.loads(body_bytes)
-                    token_from_body = body.get("token") or body.get("refresh_token")
-                except json.JSONDecodeError:
-                    # Try to parse as form data
-                    body_text = body_bytes.decode()
-                    if "token=" in body_text or "refresh_token=" in body_text:
-                        # Simple parsing for form data
-                        form_items = body_text.split("&")
-                        for item in form_items:
-                            if item.startswith(("token=", "refresh_token=")):
-                                _, value = item.split("=", 1)
-                                token_from_body = value
-                                break
-            except Exception as e:
-                msg = f"Unnabled to extract token from request body: {e!s}"
-                logger.exception(msg)
+                    body_json = json.loads(body_bytes)
+                    return body_json.get("token") or body_json.get("refresh_token")
+                except json.JSONDecodeError as e:
+                    msg = f"Unnabled to decode json from request body: {e!s}"
+                    logger.debug(msg)
+                except Exception as e:  # noqa: BLE001
+                    msg = f"Unnabled to extract token from request body: {e!s}"
+                    logger.debug(msg)
 
-        return token if token else token_from_body
+            elif "application/x-www-form-urlencoded" in content_type:
+                try:
+                    body_text = body_bytes.decode()
+                    form_data = {}
+                    for item in body_text.split("&"):
+                        if "=" in item:
+                            key, value = item.split("=", 1)
+                            form_data[key] = value
+                    return form_data.get("token") or form_data.get("refresh_token")
+                except Exception as e:  # noqa: BLE001
+                    msg = f"Unnabled to extract token from request body: {e!s}"
+                    logger.debug(msg)
+
+        return token
 
     def _extract_token_info_from_token(self, token: str) -> tuple[str, str]:
         """
@@ -630,6 +393,25 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
             tuple[str, str]: The extracted token information (jti, user_id)
         """
         try:
+            if token.count(".") == 2:  # noqa: PLR2004
+                try:
+                    import base64
+
+                    payload_b64 = token.split(".")[1]
+                    # Add padding if needed
+                    padding_needed = len(payload_b64) % 4
+                    if padding_needed:
+                        payload_b64 += "=" * (4 - padding_needed)
+
+                    payload_json = base64.urlsafe_b64decode(payload_b64)
+                    payload = json.loads(payload_json)
+
+                    jti = str(payload.get("jti", "unknown"))
+                    sub = str(payload.get("sub", "unknown").replace("user:", ""))
+                except Exception:  # noqa: BLE001, S110
+                    pass
+                return jti, sub
+
             payload = jwt.decode(
                 token,
                 options={
@@ -639,65 +421,186 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
                     "verify_exp": False,
                     "verify_nbf": False,
                     "verify_iat": False,
-                    "strict_aud": False,
-                    "require": [
-                        "sub",
-                        "jti",
-                    ],
                 },
             )
             jti = str(payload.get("jti", "unknown"))
             sub = str(payload.get("sub", "unknown").replace("user:", ""))
         except PyJWTError as e:
             msg = f"Failed to decode token: {e!s}"
-            logger.exception(msg)
+            logger.debug(msg)
             return "unknown", "unknown"
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             msg = f"Failed to decode token: {e!s}"
-            logger.exception(msg)
+            logger.debug(msg)
             return "unknown", "unknown"
         return jti, sub
 
-    async def _extract_token_info_from_response(
-        self, response: Response
-    ) -> Dict[str, Any]:
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        # Skip excluded paths or non-token endpoints
+        path = request.url.path
+        if self._should_skip_path(path):
+            return await call_next(request)
+        self.log_data["event_type"] = self._get_event_type(path)
+        if self.log_data["event_type"] == "unknown":
+            return await call_next(request)
+
+        self.log_data["client_ip"] = request.client.host if request.client else None
+        self.log_data["user_agent"] = request.headers.get("User-Agent", "unknown")
+
+        token = await self._extract_token_from_request(request)
+        self.log_data["jti"], self.log_data["user_id"] = (
+            self._extract_token_info_from_token(token)
+            if token
+            else ("unknown", "unknown")
+        )
+        self.log_data["token_type"] = self.log_data["event_type"]
+        if self.log_data["event_type"] != "unknown":
+            self.event_prefix = self.log_data["event_type"]
+        self.log_data["event_type"] = f"{self.event_prefix}_attempt"
+
+        # Log request attempt
+        self.log_data["details"] = {
+            "operation": "start",
+            "phase": "request",
+            "request_id": self.request_id,
+            "method": request.method,
+            "path": path,
+            "query_params": str(request.query_params),
+        }
+
+        TokenLogger.log_token_event(**self.log_data)
+
+        return await self._handle_response(request, call_next)
+
+    def _extract_token_info_from_response(
+        self,
+        response_data: Any,
+        token_key: str,
+    ) -> bool:
         """Extract token information from response if possible"""
-        if not isinstance(response, JSONResponse):
-            return {}
-
         try:
-            response_body = response.body
-            response_data = json.loads(response_body)
+            if "token_type" in response_data[token_key]:
+                self.log_data["token_type"] = response_data[token_key]["token_type"]
 
-            result = {}
+            if "token" not in response_data[token_key] or not isinstance(
+                response_data[token_key]["token"],
+                str,
+            ):
+                return False
+            self.log_data["jti"], self.log_data["user_id"] = (
+                self._extract_token_info_from_token(response_data[token_key]["token"])
+                if response_data[token_key]["token"]
+                else ("unknown", "unknown")
+            )
+        except json.JSONDecodeError as e:
+            msg = f"Failed to decode response body as JSON: {e!s}"
+            logger.debug(msg)
+            return False
+        except Exception as e:  # noqa: BLE001
+            msg = f"Failed to extract token info from response: {e!s}"
+            logger.debug(msg)
+            return False
+        return True
 
-            # Extract user_id
-            if "user_id" in response_data:
-                result["user_id"] = response_data["user_id"]
-            elif "user" in response_data and isinstance(response_data["user"], dict):
-                result["user_id"] = response_data["user"].get("id")
+    def log_token_response(
+        self,
+        status_code: int,
+        error_detail: str | None = None,
+    ) -> None:
+        # Create response details for logging
+        response_details = {
+            "operation": "complete" if self.log_data["success"] else "failed",
+            "phase": "response",
+            "request_id": self.log_data["request_id"],
+            "status_code": status_code,
+            "duration_ms": self.log_data["duration_ms"],
+        }
 
-            # Extract token_type
-            if "token_type" in response_data:
-                result["token_type"] = response_data["token_type"]
+        if not self.log_data["success"]:
+            response_details["error"] = (
+                error_detail if error_detail else "Unknown error"
+            )
+            if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+                response_details["stack_trace"] = traceback.format_exc()
 
-            # Try to extract JTI by decoding tokens in the response
-            for token_key in ["access_token", "token", "refresh_token"]:
-                if token_key in response_data and isinstance(
-                    response_data[token_key], str
-                ):
-                    token = response_data[token_key]
+        self.log_data["event_type"] = (
+            self.event_prefix
+            if self.log_data["success"]
+            else f"{self.event_prefix}_error"
+        )
+
+        TokenLogger.log_token_event(**self.log_data)
+
+    async def _handle_response(  # noqa: C901
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        """Handle response"""
+        error_detail = None
+        response_data = None
+
+        self.start_time = time.perf_counter()
+        try:
+            response = await call_next(request)
+
+            should_parse_response = (
+                self.event_prefix in ["create", "refresh"]
+                and response.status_code < status.HTTP_400_BAD_REQUEST
+                and response.headers.get("content-type", "").startswith(
+                    "application/json",
+                )
+            )
+
+            if should_parse_response:
+                try:
+                    response_body = response.body
+                    setattr(response, "_body", response_body)  # noqa: B010
+                    response_data = json.loads(response_body)
+                except Exception as e:  # noqa: BLE001
+                    msg = f"Failed to parse response body: {e!s}"
+                    logger.debug(msg)
+
+            if response.status_code >= status.HTTP_400_BAD_REQUEST:
+                self.log_data["success"] = False
+                if isinstance(response, JSONResponse):
                     try:
-                        payload = jwt.decode(
-                            token,
-                            options={"verify_signature": False},
-                        )
-                        if "jti" in payload:
-                            result["jti"] = payload["jti"]
-                            break
-                    except:
-                        continue
+                        error_body = response.body
+                        setattr(response, "_body", error_body)  # noqa: B010
+                        error_data = json.loads(error_body)
+                        error_detail = error_data.get("detail")
+                    except json.JSONDecodeError as e:
+                        msg = f"Failed to decode response body as JSON: {e!s}"
+                        logger.debug(msg)
+                    except Exception as e:  # noqa: BLE001
+                        msg = f"Failed to extract token info from response: {e!s}"
+                        logger.debug(msg)
+        except Exception as e:  # noqa: BLE001
+            self.log_data["success"] = False
+            error_detail = str(e)
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            response = JSONResponse(
+                content={"detail": "Internal server error"},
+                status_code=status_code,
+            )
 
-            return result
-        except:
-            return {}
+        self.log_data["duration_ms"] = round(
+            (time.perf_counter() - self.start_time) * 1000,
+        )
+
+        if not response_data:
+            self.log_token_response(response.status_code, error_detail)
+        else:
+            for token_key in ["access_token", "refresh_token", "token"]:
+                has_info = self._extract_token_info_from_response(
+                    response_data,
+                    token_key,
+                )
+                if has_info:
+                    self.log_token_response(response.status_code, error_detail)
+
+        return response

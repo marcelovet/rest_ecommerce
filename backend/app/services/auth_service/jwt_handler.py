@@ -10,10 +10,6 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import status
 from fastapi.security import OAuth2PasswordBearer
-from jwt import ExpiredSignatureError
-from jwt import InvalidSignatureError
-from jwt import MissingRequiredClaimError
-from jwt import PyJWTError
 from redis.exceptions import RedisError
 
 from app.core.config import settings
@@ -227,26 +223,33 @@ async def verify_token(token: str = Depends(oauth2_scheme)) -> dict[str, Any]:
 
         # if not present in payload, will raise an exception above
         await TokenRepository.validate_jti(payload.get("jti"))
-    except InvalidSignatureError:
-        # signature is invalid, do something about it
+
+    except jwt.ImmatureSignatureError:
+        raise HTTPException(  # noqa: B904
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is not yet valid",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.InvalidSignatureError:
+        # TODO: signature is invalid, do something about it
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except ExpiredSignatureError:
+    except jwt.ExpiredSignatureError:
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except MissingRequiredClaimError:
+    except jwt.MissingRequiredClaimError:
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except PyJWTError:
+    except jwt.PyJWTError:
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",

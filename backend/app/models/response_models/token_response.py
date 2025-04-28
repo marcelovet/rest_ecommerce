@@ -1,3 +1,5 @@
+from enum import Enum
+
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
@@ -5,13 +7,23 @@ from pydantic import field_validator
 TOKEN_SEGMENTS = 3
 
 
+class TokenType(str, Enum):
+    """Standard token types for different purposes."""
+
+    ACCESS = "bearer"  # Standard OAuth2 access token
+    REFRESH = "refresh"  # For refresh tokens
+    VERIFY = "verify"  # For email verification
+    RESET = "reset"  # For password reset
+    ACTIVATION = "activation"  # For account activation
+
+
 class TokenData(BaseModel):
     """Response model for token data."""
 
-    access_token: str = Field(..., description="JWT access token")
-    token_type: str = Field(default="bearer", description="Token type")
+    token: str = Field(..., description="JWT access token")
+    token_type: TokenType = Field(default=TokenType.ACCESS, description="Token type")
 
-    @field_validator("access_token")
+    @field_validator("token")
     @classmethod
     def validate_jwt_format(cls, value):
         """Validate that the access token follows JWT format."""
@@ -37,3 +49,10 @@ class TokenData(BaseModel):
                 raise ValueError(msg)
 
         return value
+
+
+class AccessTokenData(BaseModel):
+    """Response model for token data."""
+
+    access_token: TokenData
+    refresh_token: TokenData

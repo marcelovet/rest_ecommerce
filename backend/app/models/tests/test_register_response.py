@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.response_models.register_response import RegisterResponse
-from app.models.response_models.token import TokenData
+from app.models.response_models.token_response import TokenData
 from app.models.user.user_out import UserOut
 
 
@@ -23,8 +23,8 @@ def valid_user_data():
 def valid_token_data(valid_jwt_token):
     """Fixture for valid TokenData."""
     return TokenData(
-        access_token=valid_jwt_token,
-        token_type="bearer",  # noqa: S106
+        token=valid_jwt_token,
+        token_type="bearer",  # noqa: S106 # type: ignore[call-arg]
     )
 
 

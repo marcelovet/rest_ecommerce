@@ -1,6 +1,7 @@
 volumes:
   postgres_data_local: {}
   postgres_data_local_backups: {}
+  redis_data_local: {}
 
 services:
   postgres:
@@ -17,3 +18,8 @@ services:
       - ./compose/production/postgres/.postgres
     ports:
       - "15432:5432"
+  
+  redis:
+    image: docker.io/redis:6
+    volumes:
+      - redis_data_local:/data
