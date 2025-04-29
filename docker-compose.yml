@@ -2,6 +2,7 @@ volumes:
   postgres_data: {}
   postgres_data_backups: {}
   redis_data: {}
+  geoipupdate_data: {}
 
 x-fastapi-common: &fastapi-common
     image: 'marcelo_vet/ecommerce_api:latest'
@@ -14,6 +15,8 @@ x-fastapi-common: &fastapi-common
     env_file:
       - ./compose/production/postgres/.postgres
       - ./compose/production/fastapi/.fastapi
+    volumes:
+      - geoipupdate_data:/app/data
 
 services:
   postgres:
@@ -30,6 +33,15 @@ services:
       - ./compose/production/postgres/.postgres
     ports:
       - "5432:5432"
+  
+  geoipupdate:
+    container_name: geoipupdate
+    image: ghcr.io/maxmind/geoipupdate
+    restart: always
+    env_file:
+      - ./compose/production/geoipupdate/.geoipupdate
+    volumes:
+      - geoipupdate_data:/usr/share/GeoIP
   
   backend:
     <<: *fastapi-common

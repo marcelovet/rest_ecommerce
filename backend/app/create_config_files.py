@@ -172,6 +172,18 @@ def create_config_ini():
         set_time("Reset Password Token expiration", 10, "m"),
     )
 
+    # JWT section
+    config["geoipupdate"] = {}
+    config["geoipupdate"]["license_key"] = (
+        getpass.getpass("GeoIPUpdate license key []: ") or ""
+    )
+    config["geoipupdate"]["account_id"] = (
+        getpass.getpass("GeoIPUpdate Account id []: ") or ""
+    )
+    config["geoipupdate"]["frequency"] = str(
+        get_int_input("Hours between geoipupdate runs [72]: ", 72),
+    )
+
     # MISC
     config["misc"] = {}
     config["misc"]["api_version"] = set_api_version("1.0.0")
@@ -251,6 +263,25 @@ def create_postgres_env(config):
     print("✅ .postgres created successfully")
 
 
+def create_geoipupdate_env(config):
+    """Create .geoipupdate environment file."""
+    print("\n=== Creating .geoipupdate ===")
+
+    content = (
+        "# GEOIPUPDATE\n"
+        f"GEOIPUPDATE_ACCOUNT_ID={config['geoipupdate']['account_id']}\n"
+        f"GEOIPUPDATE_LICENSE_KEY={config['geoipupdate']['license_key']}\n"
+        "GEOIPUPDATE_EDITION_IDS='GeoLite2-ASN GeoLite2-City'\n"
+        f"GEOIPUPDATE_FREQUENCY={config['geoipupdate']['frequency']}\n"
+    )
+
+    path = DIR_PATH / "compose" / "production" / "geoipupdate" / ".geoipupdate"
+    with path.open("w") as f:
+        f.write(content)
+
+    print("✅ .geoipupdate created successfully")
+
+
 def main():
     """Main function to create all config files."""
     print("Creating configuration files for application!")
@@ -261,6 +292,7 @@ def main():
     config = create_config_ini()
     create_fastapi_env(config)
     create_postgres_env(config)
+    create_geoipupdate_env(config)
 
     print("\n✨ All configuration files created successfully!")
     print(

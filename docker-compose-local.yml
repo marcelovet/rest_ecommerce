@@ -25,3 +25,12 @@ services:
       - redis_data_local:/data
     ports:
     - "6379:6379"
+  
+  geoipupdate:
+    container_name: geoipupdate
+    image: ghcr.io/maxmind/geoipupdate
+    restart: always
+    env_file:
+      - ./compose/production/geoipupdate/.geoipupdate
+    volumes:
+      - ./backend/app/data:/usr/share/GeoIP

@@ -1,11 +1,14 @@
 # just during development
 docs/etc.md
+backend/app/data/
 
 # private and public keys
 *.pem
 
 # config files
 /compose/production/postgres/.postgres
+/compose/production/fastapi/.fastapi
+/compose/production/geoipupdate/.geoipupdate
 
 # Logs
 logs
