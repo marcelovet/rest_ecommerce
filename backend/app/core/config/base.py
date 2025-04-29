@@ -103,6 +103,9 @@ REPOSITORY_URL = f"{REDIS_URL}/{REPOSITORY_DB}"
 CACHE_HOST = REDIS_HOST
 CACHE_DB = int(redis_config["cache_db"])
 CACHE_URL = f"{REDIS_URL}/{CACHE_DB}"
+# security
+SECURITY_DB = int(redis_config["security_db"])
+SECURITY_URL = f"{REDIS_URL}/{SECURITY_DB}"
 
 # frontend
 FRONTEND_DOMAIN = misc.get("front_end", "localhost:5173")

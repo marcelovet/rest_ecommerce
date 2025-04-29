@@ -1,14 +1,30 @@
 from fastapi import FastAPI
 
-from .celery_app import create_celery
-from .config import settings as st
-
 
 def create_app() -> FastAPI:
+    from contextlib import asynccontextmanager
+
+    from app.services.auth_service.token_utils import TokenLogger
+    from app.services.auth_service.token_utils import TokenSecurityMiddleware
+
+    from .celery_app import create_celery
+    from .config import settings as st
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        TokenLogger.initialize(
+            max_batch_size=getattr(st, "TOKEN_LOG_BATCH_SIZE", 10),
+            flush_interval=getattr(st, "TOKEN_LOG_FLUSH_INTERVAL", 5.0),
+            start_background_task=True,
+        )
+        yield
+        await TokenLogger.shutdown()
+
     app = FastAPI(
         title="Ecommerce API",
         version=st.API_VERSION,
         openapi_url=f"{st.API_VERSION_PREFIX}/openapi.json",
+        lifespan=lifespan,
     )
     app.celery_app = create_celery()  # type: ignore[attr-defined]
 
@@ -20,6 +36,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+    app.add_middleware(
+        TokenSecurityMiddleware,
+        token_endpoints_io=None,
+        token_endpoints_i=None,
+        token_endpoints_o=None,
+        excluded_paths=None,
     )
 
     from app.api.router import api_router

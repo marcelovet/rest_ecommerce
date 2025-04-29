@@ -1,12 +1,16 @@
+import asyncio
+import contextlib
 import json
 import logging
 import re
+import sys
 import time
 import traceback
 import uuid
 from datetime import UTC
 from datetime import datetime
 from typing import Any
+from typing import ClassVar
 
 import jwt
 from fastapi import Request
@@ -106,10 +110,13 @@ class TokenSecurityMetrics:
 
             if event_type in counts:
                 event_counts = counts[event_type]
-                if event_counts["total"] > 10:  # noqa: PLR2004
-                    error_rate = event_counts["error"] / event_counts["total"]
-                    if error_rate > 0.3:  # error rate threshold  # noqa: PLR2004
-                        anomalies[f"high_error_rate_{timeframe}"] = error_rate
+                if (
+                    event_counts["total"] > 10  # noqa: PLR2004
+                    and event_counts["error"] / event_counts["total"] > 0.3  # noqa: PLR2004
+                ):
+                    anomalies[f"high_error_rate_{timeframe}"] = (
+                        event_counts["error"] / event_counts["total"]
+                    )
 
         # Check volume anomalies (sudden spike in operations)
         if len(cls.operation_counts["1min"]) >= 2:  # noqa: PLR2004
@@ -142,8 +149,130 @@ class TokenSecurityMetrics:
 class TokenLogger:
     """Event logger with security monitoring capabilities"""
 
-    @staticmethod
+    _log_queue: ClassVar[list[dict[str, Any]]] = []
+    _max_batch_size: ClassVar[int] = 10
+    _flush_interval: ClassVar[float] = 5.0  # seconds
+    _last_flush_time: ClassVar[float] = time.monotonic()
+    _flush_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+    _initialized: ClassVar[bool] = False
+    _critical_queue: ClassVar[
+        list[dict[str, Any]]
+    ] = []  # Separate queue for critical logs
+    _background_task: ClassVar[asyncio.Task | None] = None
+
+    @classmethod
+    def initialize(
+        cls,
+        max_batch_size: int = 10,
+        flush_interval: float = 5.0,
+        start_background_task: bool = True,  # noqa: FBT001, FBT002
+    ):
+        """Initialize the batched logger configuration"""
+        cls._max_batch_size = max_batch_size
+        cls._flush_interval = flush_interval
+        cls._initialized = True
+
+        # Start background flusher if requested
+        if start_background_task and cls._background_task is None:
+            cls._background_task = asyncio.create_task(cls._background_flusher())
+
+    @classmethod
+    async def _background_flusher(cls):
+        """Background task that periodically flushes logs"""
+        try:
+            while True:
+                await asyncio.sleep(cls._flush_interval)
+                if cls._log_queue or cls._critical_queue:
+                    await cls._flush_logs()
+        except asyncio.CancelledError:
+            # Ensure logs are flushed when the task is cancelled
+            if cls._log_queue or cls._critical_queue:
+                await cls._flush_logs()
+            raise
+
+    @classmethod
+    async def shutdown(cls):
+        """Flush remaining logs and cleanup resources during application shutdown"""
+        if cls._background_task is not None:
+            cls._background_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cls._background_task
+            cls._background_task = None
+        await cls._flush_logs()
+
+    @classmethod
+    async def _should_flush(cls) -> bool:
+        """Determine if logs should be flushed based on size or time"""
+        return (
+            len(cls._log_queue) >= cls._max_batch_size
+            or (time.monotonic() - cls._last_flush_time) >= cls._flush_interval
+        )
+
+    @classmethod
+    async def _flush_logs(cls):
+        """Flush queued logs to the logging system"""
+        async with cls._flush_lock:
+            # Process critical logs first and immediately
+            if cls._critical_queue:
+                critical_logs = cls._critical_queue.copy()
+                cls._critical_queue = []
+                for log_entry in critical_logs:
+                    try:
+                        log_level = logging.CRITICAL
+                        logger.log(log_level, json.dumps(log_entry))
+                    except Exception as e:  # noqa: BLE001
+                        print(f"ERROR LOGGING CRITICAL ENTRY: {e}", file=sys.stderr)  # noqa: T201
+                        print(f"LOG ENTRY: {log_entry}", file=sys.stderr)  # noqa: T201
+
+            if not cls._log_queue:
+                return
+            logs_to_flush = cls._log_queue.copy()
+            cls._log_queue = []
+            cls._last_flush_time = time.monotonic()
+            for log_entry in logs_to_flush:
+                try:
+                    if log_entry.get("_log_level") is not None:
+                        log_level = log_entry.pop("_log_level")
+                    else:
+                        log_level = cls._determine_log_level(log_entry)
+
+                    logger.log(log_level, json.dumps(log_entry))
+                except Exception as e:  # noqa: BLE001
+                    print(f"ERROR LOGGING ENTRY: {e}", file=sys.stderr)  # noqa: T201
+                    print(f"LOG ENTRY: {log_entry}", file=sys.stderr)  # noqa: T201
+
+    @classmethod
+    def _determine_log_level(cls, log_entry: dict[str, Any]) -> int:
+        """Determine the appropriate log level for an entry"""
+        log_level = logging.INFO
+
+        if not log_entry.get("success", True):
+            log_level = logging.ERROR
+
+        details = log_entry.get("details", {})
+        if isinstance(details, dict):
+            if "error" in details:
+                log_level = logging.ERROR
+            status_code = details.get("status_code", 0)
+            if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+                log_level = logging.ERROR
+            if details.get("security_alert"):
+                log_level = logging.CRITICAL
+
+        if "anomalies" in log_entry:
+            log_level = max(log_level, logging.WARNING)
+            anomalies = log_entry["anomalies"]
+            if (
+                "volume_spike" in anomalies
+                and anomalies["volume_spike"].get("ratio", 0) > 5  # noqa: PLR2004
+            ):
+                log_level = logging.CRITICAL
+
+        return log_level
+
+    @classmethod
     def log_token_event(  # noqa: C901, PLR0913
+        cls,
         event_type: str,
         user_id: str,
         token_type: str,
@@ -155,9 +284,11 @@ class TokenLogger:
         success: bool = True,  # noqa: FBT001, FBT002
     ):
         """
-        Log token-related events
+        Queue a token event for batched logging
         """
-        # Create the core event data
+        if not cls._initialized:
+            cls.initialize()
+
         event_data = {
             "timestamp": datetime.now(UTC).isoformat(),
             "event": f"token_{event_type}",
@@ -168,6 +299,11 @@ class TokenLogger:
             "user_agent": user_agent,
         }
 
+        event_data["sequence"] = {
+            "timestamp_ns": time.time_ns(),
+            "request_id": details.get("request_id") if details else str(uuid.uuid4()),
+        }
+
         # Record metrics if duration is provided
         if duration_ms is not None:
             event_data["duration_ms"] = duration_ms
@@ -176,7 +312,7 @@ class TokenLogger:
             # Check for performance anomalies
             if token_type in TokenSecurityMetrics.operation_latencies:
                 stats = TokenSecurityMetrics.operation_latencies[token_type]
-                if stats["count"] > 10:  # noqa: PLR2004
+                if stats["count"] > 10 and stats["total_ms"] > 0:  # noqa: PLR2004
                     avg_ms = stats["total_ms"] / stats["count"]
                     if duration_ms > avg_ms * 3:  # 3x slower than average
                         event_data["performance_alert"] = {
@@ -190,36 +326,40 @@ class TokenLogger:
         if anomalies:
             event_data["anomalies"] = anomalies
 
-            # Elevate log level for anomalies
-            log_level = logging.WARNING
-
-            # Critical anomalies require higher visibility
-            if "volume_spike" in anomalies and anomalies["volume_spike"]["ratio"] > 5:  # noqa: PLR2004
-                log_level = logging.CRITICAL
-        else:
-            log_level = logging.INFO
-
-        # Add any additional details
         if details:
             event_data.update(details)
 
-            # Check for explicit security alerts
-            if details.get("security_alert"):
-                log_level = logging.CRITICAL
+        is_critical = False
+        if details and details.get("security_alert"):
+            is_critical = True
 
-            # Check for error indicators
-            if "error" in details:
-                log_level = logging.ERROR
+        if (
+            anomalies
+            and "volume_spike" in anomalies
+            and anomalies["volume_spike"].get("ratio", 0) > 5  # noqa: PLR2004
+        ):
+            is_critical = True
 
-        # Log at appropriate level
-        logger.log(log_level, json.dumps(event_data))
+        background_tasks = set()
+        if is_critical:
+            cls._critical_queue.append(event_data)
+            cls._trigger_security_alert(event_data)
 
-        # Trigger alerts for high-severity events
-        if log_level >= logging.CRITICAL:
-            TokenLogger.trigger_security_alert(event_data)
+            # Schedule immediate flush for critical events
+            task = asyncio.create_task(cls._flush_logs())
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
+        else:
+            cls._log_queue.append(event_data)
 
-    @staticmethod
-    def trigger_security_alert(event_data: dict[str, Any]):
+            # Check if we should flush based on queue size or time
+            if len(cls._log_queue) >= cls._max_batch_size:
+                task = asyncio.create_task(cls._flush_logs())
+                background_tasks.add(task)
+                task.add_done_callback(background_tasks.discard)
+
+    @classmethod
+    def _trigger_security_alert(cls, event_data: dict[str, Any]):
         """Trigger a security alert for suspicious activity"""
         alert_data = {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -241,6 +381,8 @@ class TokenLogger:
         }
 
         msg = f"SECURITY ALERT: {json.dumps(alert_data)}"
+
+        # Log critical alerts immediately (bypass batching)
         logger.critical(msg)
 
         # TODO: integrate with security systems:
@@ -255,54 +397,102 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        jwt_secret_key: str,
-        token_endpoints: dict[str, str] | None = None,
+        token_endpoints_io: dict[str, str] | None = None,
+        token_endpoints_i: dict[str, str] | None = None,
+        token_endpoints_o: dict[str, str] | None = None,
         excluded_paths: list[str] | None = None,
     ):
+        """
+        Initialize the middleware with token endpoints and excluded paths
+
+        Args:
+            app: FastAPI application
+            token_endpoints_io: Dictionary endpoints wich expects token
+            in Request and Response and their associated operations
+            token_endpoints_i: Dictionary endpoints wich expects token
+            only in Request and their associated operations
+            token_endpoints_o: Dictionary endpoints wich expects token
+            only in Response and their associated operations
+            excluded_paths: List of paths to exclude from token monitoring
+            which does not has token in Request or Response
+        """
         super().__init__(app)
-        self.token_endpoints = token_endpoints or {
-            f"{st.API_VERSION_PREFIX}/auth/token": "create",
+        self.token_endpoints_io = token_endpoints_io or {
             f"{st.API_VERSION_PREFIX}/auth/refresh": "refresh",
+            f"{st.API_VERSION_PREFIX}/auth/sessions": "view_sessions",
+        }
+        self.token_endpoints_i = token_endpoints_i or {
             f"{st.API_VERSION_PREFIX}/auth/revoke": "revoke",
             f"{st.API_VERSION_PREFIX}/auth/verify": "verify",
             f"{st.API_VERSION_PREFIX}/auth/logout": "logout",
-            f"{st.API_VERSION_PREFIX}/auth/sessions": "view_sessions",
-            r"/api/v\d+/auth/.*": "auth_operation",
+        }
+        self.token_endpoints_o = token_endpoints_o or {
+            f"{st.API_VERSION_PREFIX}/auth/token": "create",
         }
 
         self.exact_path_mapping = {
             path: event_type
-            for path, event_type in self.token_endpoints.items()
+            for path, event_type in dict(
+                **self.token_endpoints_io,
+                **self.token_endpoints_i,
+                **self.token_endpoints_o,
+            ).items()
             if not any(c in path for c in ".*?+()[]{}^$")
         }
         self.regex_patterns = {
             re.compile(pattern): event_type
-            for pattern, event_type in self.token_endpoints.items()
+            for pattern, event_type in dict(
+                **self.token_endpoints_io,
+                **self.token_endpoints_i,
+                **self.token_endpoints_o,
+            ).items()
             if any(c in pattern for c in ".*?+()[]{}^$")
         }
 
         # Excluded paths for faster skipping
+        self.excluded_path_in_request = {
+            path
+            for path in self.token_endpoints_o
+            if not any(c in path for c in ".*?+()[]{}^$")
+        }
+        self.excluded_regex_in_request = [
+            re.compile(path)
+            for path in self.token_endpoints_o
+            if any(c in path for c in ".*?+()[]{}^$")
+        ]
+
+        self.excluded_path_in_response = {
+            path
+            for path in self.token_endpoints_i
+            if not any(c in path for c in ".*?+()[]{}^$")
+        }
+        self.excluded_regex_in_response = [
+            re.compile(path)
+            for path in self.token_endpoints_i
+            if any(c in path for c in ".*?+()[]{}^$")
+        ]
+
         self.excluded_paths = set(
             excluded_paths
             or [
-                "/docs",
-                "/redoc",
-                "/openapi.json",
-                "/favicon.ico",
-                "/static/",
-                "/health",
-                "/metrics",
+                f"{st.API_VERSION_PREFIX}/docs",
+                f"{st.API_VERSION_PREFIX}/redoc",
+                f"{st.API_VERSION_PREFIX}/openapi.json",
+                f"{st.API_VERSION_PREFIX}/favicon.ico",
+                f"{st.API_VERSION_PREFIX}/static/",
+                f"{st.API_VERSION_PREFIX}/health",
+                f"{st.API_VERSION_PREFIX}/metrics",
             ],
         )
-
         self.excluded_regex = [
             re.compile(path)
             for path in self.excluded_paths
             if any(c in path for c in ".*?+()[]{}^$")
         ]
 
-        self.jwt_secret_key = jwt_secret_key
-        self.log_data = {
+    def create_initial_log_data(self) -> dict[str, Any]:
+        """Create initial log data"""
+        return {
             "event_type": "unknown",
             "user_id": "unknown",
             "token_type": "unknown",
@@ -313,15 +503,24 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
             "duration_ms": None,
             "success": True,
         }
-        self.request_id = str(uuid.uuid4())
-        self.event_prefix = "request"
-        self.start_time = 0
 
     def _should_skip_path(self, path: str) -> bool:
         """Fast check if path should be skipped"""
         if path in self.excluded_paths:
             return True
         return any(pattern.match(path) for pattern in self.excluded_regex)
+
+    def _should_skip_token_eval_in_request(self, path: str) -> bool:
+        """Fast check if token evaluation should be skipped in Request"""
+        if path in self.excluded_path_in_request:
+            return True
+        return any(pattern.match(path) for pattern in self.excluded_regex_in_request)
+
+    def _should_skip_token_eval_in_response(self, path: str) -> bool:
+        """Fast check if token evaluation should be skipped in Response"""
+        if path in self.excluded_path_in_response:
+            return True
+        return any(pattern.match(path) for pattern in self.excluded_regex_in_response)
 
     def _get_event_type(self, path: str) -> str:
         """Determine the token event type based on the request path"""
@@ -332,35 +531,38 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
                 return event_type
         return "unknown"
 
-    async def _buffer_request_body(self, request: Request) -> bytes:
+    async def _buffer_request_body(self, request: Request) -> tuple[bytes, Request]:
         """Buffer the request body for reuse"""
         body = await request.body()
         setattr(request, "_body", body)  # noqa: B010
-        return body
+        return body, request
 
     async def _extract_token_from_request(
         self,
         request: Request,
-    ) -> str | None:
+        log_data: dict[str, Any],
+    ) -> tuple[str | None, Request]:
         """Extract token from request if possible"""
         token = None
         auth_header = request.headers.get("Authorization")
         if auth_header and " " in auth_header:
             _, token = auth_header.split(" ", 1)
-            return token
+            return token, request
 
         content_type = request.headers.get("Content-Type", "")
 
-        if self.log_data["event_type"] in ["refresh", "verify"] and (
+        # TODO: set what events are expected to have a token in the body
+        # events that expects a token in the body
+        if log_data["event_type"] in ["refresh", "verify"] and (
             "application/json" in content_type
             or "application/x-www-form-urlencoded" in content_type
         ):
-            body_bytes = await self._buffer_request_body(request)
+            body_bytes, request = await self._buffer_request_body(request)
 
             if "application/json" in content_type:
                 try:
                     body_json = json.loads(body_bytes)
-                    return body_json.get("token") or body_json.get("refresh_token")
+                    token = body_json.get("token") or body_json.get("refresh_token")
                 except json.JSONDecodeError as e:
                     msg = f"Unnabled to decode json from request body: {e!s}"
                     logger.debug(msg)
@@ -376,12 +578,12 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
                         if "=" in item:
                             key, value = item.split("=", 1)
                             form_data[key] = value
-                    return form_data.get("token") or form_data.get("refresh_token")
+                    token = form_data.get("token") or form_data.get("refresh_token")
                 except Exception as e:  # noqa: BLE001
                     msg = f"Unnabled to extract token from request body: {e!s}"
                     logger.debug(msg)
 
-        return token
+        return token, request
 
     def _extract_token_info_from_token(self, token: str) -> tuple[str, str]:
         """
@@ -435,63 +637,35 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
             return "unknown", "unknown"
         return jti, sub
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        # Skip excluded paths or non-token endpoints
-        path = request.url.path
-        if self._should_skip_path(path):
-            return await call_next(request)
-        self.log_data["event_type"] = self._get_event_type(path)
-        if self.log_data["event_type"] == "unknown":
-            return await call_next(request)
-
-        self.log_data["client_ip"] = request.client.host if request.client else None
-        self.log_data["user_agent"] = request.headers.get("User-Agent", "unknown")
-
-        token = await self._extract_token_from_request(request)
-        self.log_data["jti"], self.log_data["user_id"] = (
-            self._extract_token_info_from_token(token)
-            if token
-            else ("unknown", "unknown")
-        )
-        self.log_data["token_type"] = self.log_data["event_type"]
-        if self.log_data["event_type"] != "unknown":
-            self.event_prefix = self.log_data["event_type"]
-        self.log_data["event_type"] = f"{self.event_prefix}_attempt"
-
-        # Log request attempt
-        self.log_data["details"] = {
-            "operation": "start",
-            "phase": "request",
-            "request_id": self.request_id,
-            "method": request.method,
-            "path": path,
-            "query_params": str(request.query_params),
-        }
-
-        TokenLogger.log_token_event(**self.log_data)
-
-        return await self._handle_response(request, call_next)
-
     def _extract_token_info_from_response(
         self,
         response_data: Any,
         token_key: str,
-    ) -> bool:
+        log_data: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
         """Extract token information from response if possible"""
         try:
+            if token_key == "token" and "token" in response_data:  # noqa: S105
+                log_data["token_type"] = response_data["token_type"]
+                log_data["jti"], log_data["user_id"] = (
+                    self._extract_token_info_from_token(
+                        response_data["token"],
+                    )
+                    if response_data["token"]
+                    else ("unknown", "unknown")
+                )
+                return True, log_data
+
             if "token_type" in response_data[token_key]:
-                self.log_data["token_type"] = response_data[token_key]["token_type"]
+                log_data["token_type"] = response_data[token_key]["token_type"]
 
             if "token" not in response_data[token_key] or not isinstance(
                 response_data[token_key]["token"],
                 str,
             ):
-                return False
-            self.log_data["jti"], self.log_data["user_id"] = (
+                return False, log_data
+
+            log_data["jti"], log_data["user_id"] = (
                 self._extract_token_info_from_token(response_data[token_key]["token"])
                 if response_data[token_key]["token"]
                 else ("unknown", "unknown")
@@ -499,88 +673,187 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
         except json.JSONDecodeError as e:
             msg = f"Failed to decode response body as JSON: {e!s}"
             logger.debug(msg)
-            return False
+            return False, log_data
         except Exception as e:  # noqa: BLE001
             msg = f"Failed to extract token info from response: {e!s}"
             logger.debug(msg)
-            return False
-        return True
+            return False, log_data
+        return True, log_data
 
     def log_token_response(
         self,
         status_code: int,
+        log_data: dict[str, Any],
+        event_prefix: str,
         error_detail: str | None = None,
     ) -> None:
         # Create response details for logging
         response_details = {
-            "operation": "complete" if self.log_data["success"] else "failed",
+            "operation": "complete" if log_data["success"] else "failed",
             "phase": "response",
-            "request_id": self.log_data["request_id"],
+            "request_id": log_data["request_id"],
             "status_code": status_code,
-            "duration_ms": self.log_data["duration_ms"],
+            "duration_ms": log_data["duration_ms"],
         }
 
-        if not self.log_data["success"]:
+        if not log_data["success"]:
             response_details["error"] = (
                 error_detail if error_detail else "Unknown error"
             )
             if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
                 response_details["stack_trace"] = traceback.format_exc()
 
-        self.log_data["event_type"] = (
-            self.event_prefix
-            if self.log_data["success"]
-            else f"{self.event_prefix}_error"
+        log_data["event_type"] = (
+            event_prefix if log_data["success"] else f"{event_prefix}_error"
         )
 
-        TokenLogger.log_token_event(**self.log_data)
+        log_data["details"] = response_details
 
-    async def _handle_response(  # noqa: C901
+        TokenLogger.log_token_event(**log_data)
+
+    async def _handle_request(
+        self,
+        request: Request,
+        log_data: dict[str, Any],
+        request_id: str,
+        path: str,
+        event_prefix: str,
+    ) -> tuple[dict[str, Any], str, Request]:
+        log_data["client_ip"] = request.client.host if request.client else None
+        log_data["user_agent"] = request.headers.get("User-Agent", "unknown")
+
+        if not self._should_skip_token_eval_in_request(path):
+            token, request = await self._extract_token_from_request(request, log_data)
+            log_data["jti"], log_data["user_id"] = (
+                self._extract_token_info_from_token(token)
+                if token
+                else ("unknown", "unknown")
+            )
+
+        log_data["token_type"] = log_data["event_type"]
+        if log_data["event_type"] != "unknown":
+            event_prefix = log_data["event_type"]
+        log_data["event_type"] = f"{event_prefix}_attempt"
+
+        # Log request attempt
+        log_data["details"] = {
+            "operation": "start",
+            "phase": "request",
+            "request_id": request_id,
+            "method": request.method,
+            "path": path,
+            "query_params": str(request.query_params),
+        }
+
+        TokenLogger.log_token_event(**log_data)
+
+        return log_data, event_prefix, request
+
+    async def _handle_response(  # noqa: PLR0913
+        self,
+        response: Response,
+        start_time: float,
+        path: str,
+        event_prefix: str,
+        log_data: dict[str, Any],
+        error_detail: str | None,
+    ) -> Response:
+        """Handle response"""
+        response_data = None
+
+        if (
+            not self._should_skip_token_eval_in_response(path)
+            and response.status_code < status.HTTP_400_BAD_REQUEST
+        ):
+            try:
+                response_body = response.body
+                setattr(response, "_body", response_body)  # noqa: B010
+                response_data = json.loads(response_body)
+            except Exception as e:  # noqa: BLE001
+                msg = f"Failed to parse response body: {e!s}"
+                logger.debug(msg)
+
+        if response.status_code >= status.HTTP_400_BAD_REQUEST:
+            log_data["success"] = False
+            if isinstance(response, JSONResponse):
+                try:
+                    error_body = response.body
+                    setattr(response, "_body", error_body)  # noqa: B010
+                    error_data = json.loads(error_body)
+                    error_detail = error_data.get("detail")
+                except json.JSONDecodeError as e:
+                    msg = f"Failed to decode response body as JSON: {e!s}"
+                    logger.debug(msg)
+                except Exception as e:  # noqa: BLE001
+                    msg = f"Failed to extract token info from response: {e!s}"
+                    logger.debug(msg)
+
+        log_data["duration_ms"] = round(
+            (time.perf_counter() - start_time) * 1000,
+        )
+
+        if response_data is None:
+            self.log_token_response(
+                response.status_code,
+                log_data,
+                event_prefix,
+                error_detail,
+            )
+        else:
+            for token_key in [
+                "access_token",
+                "refresh_token",
+                "limited_token",
+                "token",
+            ]:
+                has_info, log_data = self._extract_token_info_from_response(
+                    response_data,
+                    token_key,
+                    log_data,
+                )
+                if has_info:
+                    self.log_token_response(
+                        response.status_code,
+                        log_data,
+                        event_prefix,
+                        error_detail,
+                    )
+
+        return response
+
+    async def dispatch(
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        """Handle response"""
-        error_detail = None
-        response_data = None
+        # Skip non-token endpoints
+        path = request.url.path
+        if self._should_skip_path(path):
+            return await call_next(request)
 
-        self.start_time = time.perf_counter()
+        log_data = self.create_initial_log_data()
+        request_id = str(uuid.uuid4())
+        event_prefix = "request"
+        log_data["event_type"] = self._get_event_type(path)
+
+        # event type was not set before
+        if log_data["event_type"] == "unknown":
+            return await call_next(request)
+
+        log_data, event_prefix, request = await self._handle_request(
+            request,
+            log_data,
+            request_id,
+            path,
+            event_prefix,
+        )
+
+        error_detail = None
+        start_time = time.perf_counter()
         try:
             response = await call_next(request)
-
-            should_parse_response = (
-                self.event_prefix in ["create", "refresh"]
-                and response.status_code < status.HTTP_400_BAD_REQUEST
-                and response.headers.get("content-type", "").startswith(
-                    "application/json",
-                )
-            )
-
-            if should_parse_response:
-                try:
-                    response_body = response.body
-                    setattr(response, "_body", response_body)  # noqa: B010
-                    response_data = json.loads(response_body)
-                except Exception as e:  # noqa: BLE001
-                    msg = f"Failed to parse response body: {e!s}"
-                    logger.debug(msg)
-
-            if response.status_code >= status.HTTP_400_BAD_REQUEST:
-                self.log_data["success"] = False
-                if isinstance(response, JSONResponse):
-                    try:
-                        error_body = response.body
-                        setattr(response, "_body", error_body)  # noqa: B010
-                        error_data = json.loads(error_body)
-                        error_detail = error_data.get("detail")
-                    except json.JSONDecodeError as e:
-                        msg = f"Failed to decode response body as JSON: {e!s}"
-                        logger.debug(msg)
-                    except Exception as e:  # noqa: BLE001
-                        msg = f"Failed to extract token info from response: {e!s}"
-                        logger.debug(msg)
         except Exception as e:  # noqa: BLE001
-            self.log_data["success"] = False
+            log_data["success"] = False
             error_detail = str(e)
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
             response = JSONResponse(
@@ -588,19 +861,11 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
                 status_code=status_code,
             )
 
-        self.log_data["duration_ms"] = round(
-            (time.perf_counter() - self.start_time) * 1000,
+        return await self._handle_response(
+            response,
+            start_time,
+            path,
+            event_prefix,
+            log_data,
+            error_detail,
         )
-
-        if not response_data:
-            self.log_token_response(response.status_code, error_detail)
-        else:
-            for token_key in ["access_token", "refresh_token", "token"]:
-                has_info = self._extract_token_info_from_response(
-                    response_data,
-                    token_key,
-                )
-                if has_info:
-                    self.log_token_response(response.status_code, error_detail)
-
-        return response
