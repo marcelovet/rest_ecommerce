@@ -1284,30 +1284,36 @@ class IPSecurityManager:
             if user_id and user_id != "unknown":
                 user_failures_key = f"user:{user_id}:auth_failures"
                 pipe.incr(user_failures_key)
-                pipe.expire(user_failures_key, 3600)  # 1 hour
+                pipe.expire(user_failures_key, st.USER_AUTH_FAILURE_EXPIRES)
                 pipe.sadd(f"user:{user_id}:failure_ips", ip_address)
-                pipe.expire(f"user:{user_id}:failure_ips", 86400)  # 1 day
+                pipe.expire(
+                    f"user:{user_id}:failure_ips",
+                    st.USER_AUTH_FAILURE_IPS_EXPIRES,
+                )
 
             await pipe.execute()
 
             # Check if we should mark IP as suspicious after multiple failures
             failures = int(await cls._redis_client.get(auth_failures_key) or 0)
-            # TODO: variable threshold
-            if failures >= 10:  # threshold
+            if failures >= st.AUTH_FAILURES_THRESHOLD * 2:
                 times = await cls._redis_client.lrange(
                     f"ip:{ip_address}:auth_failure_times",
                     0,
                     -1,
-                )
-                if len(times) >= 2:
+                )  # type: ignore[call]
+                if len(times) >= 2:  # noqa: PLR2004
                     try:
                         first_time = datetime.fromisoformat(times[-1])
                         last_time = datetime.fromisoformat(times[0])
                         time_span = (last_time - first_time).total_seconds()
                         if (
-                            time_span < 300 and failures >= 10
+                            time_span < st.AUTH_FAILURES_TIMESPAN_THRESHOLD
+                            and failures >= st.AUTH_FAILURES_THRESHOLD * 2
                         ):  # 5 minutes, 10+ failures
-                            reason = f"Potential brute force: {failures} failures in {time_span:.1f} seconds"
+                            reason = (
+                                f"Potential brute force: {failures} failures "
+                                f"in {time_span:.1f} seconds"
+                            )
                             await cls.mark_malicious_ip(
                                 ip_address,
                                 reason,
