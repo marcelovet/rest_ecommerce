@@ -830,6 +830,224 @@ class IPSecurityManager:
                 logger.debug(msg)
 
     @classmethod
+    def _check_tor(
+        cls,
+        ip_address: str,
+    ) -> dict[str, Any]:
+        alerts = {}
+        score = 0
+        details = {}
+        if cls._is_tor_exit_node(ip_address):
+            alerts["tor_exit_node"] = True
+            score += 30
+            details["tor"] = True
+        else:
+            details["tor"] = False
+        return {"score": score, "details": details, "alerts": alerts}
+
+    @classmethod
+    async def _check_blocklist(
+        cls,
+        ip_address: str,
+    ) -> dict[str, Any]:
+        alerts = {}
+        score = 0
+        details = {}
+        is_malicious, reason = await cls._is_known_malicious_ip(ip_address)
+        if is_malicious:
+            alerts["known_malicious_ip"] = reason
+            score += 60
+            details["blocklisted"] = True
+            details["blocklist_reason"] = reason
+        else:
+            details["blocklisted"] = False
+        return {"score": score, "details": details, "alerts": alerts}
+
+    @classmethod
+    async def _check_reputation(
+        cls,
+        ip_address: str,
+    ) -> dict[str, Any]:
+        alerts = {}
+        score = 0
+        details = {}
+
+        ip_reputation = await cls._check_ip_reputation(ip_address)
+        details["reputation"] = ip_reputation
+
+        if ip_reputation.get("is_suspicious"):
+            alerts["suspicious_ip_reputation"] = {
+                "score": ip_reputation.get("score"),
+                "reports": ip_reputation.get("reports"),
+            }
+            rep_score = min(ip_reputation.get("score", 0) // 10, 40)
+            score += rep_score
+
+        if ip_reputation.get("is_known_attacker"):
+            alerts["known_attacker"] = ip_reputation.get("score", 0)
+            score += 20
+
+        return {"score": score, "details": details, "alerts": alerts}
+
+    @classmethod
+    async def _check_geolocation(
+        cls,
+        ip_address: str,
+        request_path: str | None = None,
+    ) -> dict[str, Any]:
+        alerts = {}
+        score = 0
+        details = {}
+
+        geo_data = await cls._check_geoip_risk(ip_address)
+        details["geolocation"] = geo_data
+
+        if geo_data.get("is_high_risk_country"):
+            alerts["high_risk_country"] = geo_data.get("country_code")
+            score += 15
+
+        if geo_data.get("is_malicious_asn"):
+            alerts["known_malicious_datacenter_ip"] = {
+                "asn": geo_data.get("asn"),
+                "provider": geo_data.get("asn_org"),
+            }
+            score += 50
+            details["known_malicious_datacenter_details"] = {
+                "asn": geo_data.get("asn"),
+                "provider": geo_data.get("asn_org"),
+            }
+
+        if geo_data.get("is_datacenter"):
+            # Only treat datacenters as suspicious for sensitive endpoints
+            is_sensitive_path = False
+            if request_path:
+                # TODO: Add more sensitive paths here, maybe with a separate config?
+                sensitive_patterns = [
+                    "/auth",
+                    "/login",
+                    "/verify",
+                    "/token",
+                    "/admin",
+                    "/reset",
+                ]
+                is_sensitive_path = any(
+                    pattern in request_path for pattern in sensitive_patterns
+                )
+            if is_sensitive_path:
+                alerts["datacenter_ip"] = {
+                    "asn": geo_data.get("asn"),
+                    "provider": geo_data.get("asn_org"),
+                }
+                score += 10
+                details["datacenter_details"] = {
+                    "asn": geo_data.get("asn"),
+                    "provider": geo_data.get("asn_org"),
+                }
+
+        return {
+            "score": score,
+            "details": details,
+            "alerts": alerts,
+            "geo_data": geo_data,
+        }
+
+    @classmethod
+    async def _check_user_location(
+        cls,
+        user_id: str | None = None,
+        user_country: str | None = None,
+    ) -> dict[str, Any] | None:
+        if not cls._redis_client:
+            return None
+        if not user_id or user_id != "unknown":
+            return None
+        if not user_country:
+            return None
+        alerts = {}
+        score = 0
+        details = {}
+        try:
+            # Check user's previous countries
+            prev_countries_key = f"user:{user_id}:countries"
+            prev_countries = await cls._redis_client.smembers(prev_countries_key)  # type: ignore[call-arg]
+
+            if prev_countries:
+                details["previous_countries"] = list(prev_countries)
+                details["unusual_country"] = False
+                if user_country not in prev_countries:
+                    alerts["unusual_country"] = {
+                        "current": user_country,
+                        "previous": list(prev_countries),
+                    }
+                    score += 25
+                    details["unusual_country"] = True
+            pipe = cls._redis_client.pipeline()
+            pipe.sadd(prev_countries_key, user_country)
+            pipe.expire(prev_countries_key, st.COUNTRY_ACCESS_EXPIRE)
+            await pipe.execute()
+        except Exception as e:  # noqa: BLE001
+            details["user_location_error"] = str(e)
+            msg = f"User country check failed: {e}"
+            logger.warning(msg)
+        return {"score": score, "details": details, "alerts": alerts}
+
+    @classmethod
+    async def _check_recent_activity(cls, ip_address: str) -> dict[str, Any] | None:
+        """
+        Check recent activity for an IP address.
+
+        Args:
+            ip_address (str): The IP address.
+        Returns:
+            (dict | None): A dictionary containing the recent activity details.
+            or None if Redis is not configured.
+        """
+        if not cls._redis_client:
+            return None
+        alerts = {}
+        score = 0
+        details = {}
+        try:
+            auth_failures_key = f"ip:{ip_address}:auth_failures"
+            recent_failures = await cls._redis_client.get(auth_failures_key)
+            if recent_failures:
+                failures = int(recent_failures)
+                details["recent_auth_failures"] = failures
+                if failures >= st.AUTH_FAILURES_THRESHOLD:
+                    alerts["recent_auth_failures"] = failures
+                    score += min(failures * 5, 30)
+
+            security_events_key = f"ip:{ip_address}:security_events"
+            recent_events = await cls._redis_client.get(security_events_key)
+            if recent_events:
+                events = int(recent_events)
+                details["recent_security_events"] = events
+                if events >= st.SECURITY_EVENTS_THRESHOLD:
+                    alerts["recent_security_events"] = events
+                    score += min(events * 8, 40)
+        except Exception as e:  # noqa: BLE001
+            details["recent_activity_error"] = str(e)
+            msg = f"Recent activity check failed: {e}"
+            logger.warning(msg)
+        return {"score": score, "details": details, "alerts": alerts}
+
+    @classmethod
+    def _update_check_ip_data(
+        cls,
+        check_type: str,
+        update_data: dict[str, Any] | None,
+        alerts: dict[str, Any],
+        threat_score: int,
+        details: dict[str, Any],
+    ) -> tuple[dict[str, Any], int, dict[str, Any]]:
+        if update_data is not None:
+            details["checks_performed"].append(check_type)
+            threat_score += update_data.get("score", 0)
+            details.update(update_data.get("details", {}))
+            alerts.update(update_data.get("alerts", {}))
+        return alerts, threat_score, details
+
+    @classmethod
     async def check_ip_security(
         cls,
         ip_address: str,
@@ -880,137 +1098,60 @@ class IPSecurityManager:
         }
         context = context or {}
 
-        details["checks_performed"].append("tor")
-        if cls._is_tor_exit_node(ip_address):
-            alerts["tor_exit_node"] = True
-            threat_score += 30
-            details["tor"] = True
-        else:
-            details["tor"] = False
+        check = cls._check_tor(ip_address)
+        alerts, threat_score, details = cls._update_check_ip_data(
+            "tor",
+            check,
+            alerts,
+            threat_score,
+            details,
+        )
 
-        details["checks_performed"].append("blocklist")
-        is_malicious, reason = await cls._is_known_malicious_ip(ip_address)
-        if is_malicious:
-            alerts["known_malicious_ip"] = reason
-            threat_score += 60
-            details["blocklisted"] = True
-            details["blocklist_reason"] = reason
-        else:
-            details["blocklisted"] = False
+        check = await cls._check_blocklist(ip_address)
+        alerts, threat_score, details = cls._update_check_ip_data(
+            "blocklist",
+            check,
+            alerts,
+            threat_score,
+            details,
+        )
 
-        details["checks_performed"].append("reputation")
-        ip_reputation = await cls._check_ip_reputation(ip_address)
-        details["reputation"] = ip_reputation
+        check = await cls._check_reputation(ip_address)
+        alerts, threat_score, details = cls._update_check_ip_data(
+            "reputation",
+            check,
+            alerts,
+            threat_score,
+            details,
+        )
 
-        if ip_reputation.get("is_suspicious"):
-            alerts["suspicious_ip_reputation"] = {
-                "score": ip_reputation.get("score"),
-                "reports": ip_reputation.get("reports"),
-            }
-            rep_score = min(ip_reputation.get("score", 0) // 10, 40)
-            threat_score += rep_score
+        check = await cls._check_geolocation(ip_address, request_path)
+        user_country = check.get("geo_data", {}).get("country_code")
+        alerts, threat_score, details = cls._update_check_ip_data(
+            "geolocation",
+            check,
+            alerts,
+            threat_score,
+            details,
+        )
 
-        if ip_reputation.get("is_known_attacker"):
-            alerts["known_attacker"] = ip_reputation.get("score", 0)
-            threat_score += 20
+        check = await cls._check_user_location(user_id, user_country)
+        alerts, threat_score, details = cls._update_check_ip_data(
+            "user_location_history",
+            check,
+            alerts,
+            threat_score,
+            details,
+        )
 
-        details["checks_performed"].append("geolocation")
-        geo_data = await cls._check_geoip_risk(ip_address)
-        details["geolocation"] = geo_data
-
-        if geo_data.get("is_high_risk_country"):
-            alerts["high_risk_country"] = geo_data.get("country_code")
-            threat_score += 15
-
-        if geo_data.get("is_malicious_asn"):
-            alerts["known_malicious_datacenter_ip"] = {
-                "asn": geo_data.get("asn"),
-                "provider": geo_data.get("asn_org"),
-            }
-            threat_score += 50
-            details["known_malicious_datacenter_details"] = {
-                "asn": geo_data.get("asn"),
-                "provider": geo_data.get("asn_org"),
-            }
-
-        if geo_data.get("is_datacenter"):
-            # Only treat datacenters as suspicious for sensitive endpoints
-            is_sensitive_path = False
-            if request_path:
-                # TODO: Add more sensitive paths here, maybe with a separate config?
-                sensitive_patterns = [
-                    "/auth",
-                    "/login",
-                    "/verify",
-                    "/token",
-                    "/admin",
-                    "/reset",
-                ]
-                is_sensitive_path = any(
-                    pattern in request_path for pattern in sensitive_patterns
-                )
-            if is_sensitive_path:
-                alerts["datacenter_ip"] = {
-                    "asn": geo_data.get("asn"),
-                    "provider": geo_data.get("asn_org"),
-                }
-                threat_score += 10
-                details["datacenter_details"] = {
-                    "asn": geo_data.get("asn"),
-                    "provider": geo_data.get("asn_org"),
-                }
-
-        user_country = geo_data.get("country_code")
-        if user_id and user_id != "unknown" and cls._redis_client and user_country:
-            details["checks_performed"].append("user_location_history")
-            try:
-                # Check user's previous countries
-                prev_countries_key = f"user:{user_id}:countries"
-                prev_countries = await cls._redis_client.smembers(prev_countries_key)  # type: ignore[call-arg]
-
-                if prev_countries:
-                    details["previous_countries"] = list(prev_countries)
-                    details["unusual_country"] = False
-                    if user_country not in prev_countries:
-                        alerts["unusual_country"] = {
-                            "current": user_country,
-                            "previous": list(prev_countries),
-                        }
-                        threat_score += 25
-                        details["unusual_country"] = True
-                pipe = cls._redis_client.pipeline()
-                pipe.sadd(prev_countries_key, user_country)
-                pipe.expire(prev_countries_key, st.COUNTRY_ACCESS_EXPIRE)
-                await pipe.execute()
-            except Exception as e:  # noqa: BLE001
-                details["user_location_error"] = str(e)
-                msg = f"User country check failed: {e}"
-                logger.warning(msg)
-
-        if cls._redis_client:
-            details["checks_performed"].append("recent_activity")
-            try:
-                auth_failures_key = f"ip:{ip_address}:auth_failures"
-                recent_failures = await cls._redis_client.get(auth_failures_key)
-                if recent_failures:
-                    failures = int(recent_failures)
-                    details["recent_auth_failures"] = failures
-                    if failures >= st.AUTH_FAILURES_THRESHOLD:
-                        alerts["recent_auth_failures"] = failures
-                        threat_score += min(failures * 5, 30)
-
-                security_events_key = f"ip:{ip_address}:security_events"
-                recent_events = await cls._redis_client.get(security_events_key)
-                if recent_events:
-                    events = int(recent_events)
-                    details["recent_security_events"] = events
-                    if events >= st.SECURITY_EVENTS_THRESHOLD:
-                        alerts["recent_security_events"] = events
-                        threat_score += min(events * 8, 40)
-            except Exception as e:  # noqa: BLE001
-                details["recent_activity_error"] = str(e)
-                msg = f"Recent activity check failed: {e}"
-                logger.warning(msg)
+        check = await cls._check_recent_activity(ip_address)
+        alerts, threat_score, details = cls._update_check_ip_data(
+            "recent_activity",
+            check,
+            alerts,
+            threat_score,
+            details,
+        )
 
         is_suspicious = threat_score >= ThreatLevelThreshold.MEDIUM
         details["threat_score"] = threat_score
@@ -1066,14 +1207,15 @@ class IPSecurityManager:
             try:
                 ipaddress.ip_address(ip_address)
             except ValueError:
-                logger.error(f"Invalid IP address: {ip_address}")
+                msg = f"Invalid IP address: {ip_address}"
+                logger.exception(msg)
                 return False
 
             pipe = cls._redis_client.pipeline()
             pipe.sadd("flagged_malicious_ips", ip_address)
             info_key = f"flagged_ip:{ip_address}"
             current_time = datetime.now(UTC).isoformat()
-            existing_data = await cls._redis_client.hgetall(info_key)
+            existing_data = await cls._redis_client.hgetall(info_key)  # type: ignore[call]
             ip_data = {
                 "first_detected": existing_data.get("first_detected", current_time),
                 "last_detected": current_time,
@@ -1097,7 +1239,7 @@ class IPSecurityManager:
                 "action": "mark_malicious",
             }
             pipe.hset(event_key, mapping=event_data)
-            pipe.expire(event_key, 86400 * 7)  # 7 days
+            pipe.expire(event_key, st.IP_EVENT_EXPIRES)
             pipe.lpush("ip_security:recent_events", event_id)
             pipe.ltrim("ip_security:recent_events", 0, 999)  # Keep last 1000 events
             await pipe.execute()
@@ -1129,12 +1271,15 @@ class IPSecurityManager:
             pipe = cls._redis_client.pipeline()
             auth_failures_key = f"ip:{ip_address}:auth_failures"
             pipe.incr(auth_failures_key)
-            pipe.expire(auth_failures_key, 3600)  # 1 hour
+            pipe.expire(auth_failures_key, st.IP_AUTH_FAILURE_EXPIRES)
 
             timestamp = datetime.now(UTC).isoformat()
             pipe.lpush(f"ip:{ip_address}:auth_failure_times", timestamp)
             pipe.ltrim(f"ip:{ip_address}:auth_failure_times", 0, 19)  # Keep last 20
-            pipe.expire(f"ip:{ip_address}:auth_failure_times", 86400)  # 1 day
+            pipe.expire(
+                f"ip:{ip_address}:auth_failure_times",
+                st.IP_AUTH_FAILURE_TIME_EXPIRES,
+            )
 
             if user_id and user_id != "unknown":
                 user_failures_key = f"user:{user_id}:auth_failures"
