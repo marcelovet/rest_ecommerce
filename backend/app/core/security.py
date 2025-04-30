@@ -178,20 +178,12 @@ class IPSecurityManager:
                 cls._redis_client = None
 
         # Set up GeoIP databases
-        cls._geo_city_db_path = geo_city_db_path or getattr(
-            st,
-            "GEOIP_CITY_DB_PATH",
-            "/app/data/GeoLite2-City.mmdb",
-        )
-        cls._geo_asn_db_path = geo_asn_db_path or getattr(
-            st,
-            "GEOIP_ASN_DB_PATH",
-            "/app/data/GeoLite2-ASN.mmdb",
-        )
+        cls._geo_city_db_path = geo_city_db_path or st.GEOIP_CITY_DB_PATH
+        cls._geo_asn_db_path = geo_asn_db_path or st.GEOIP_ASN_DB_PATH
 
         # Set up API keys
         cls._api_keys = api_keys or {
-            "abuseipdb": getattr(st, "ABUSEIPDB_API_KEY", ""),
+            "abuseipdb": st.ABUSEIPDB_API_KEY,
             # in a enterprise setting, maybe use ipqualityscore
             # "ipqualityscore": getattr(st, "IPQUALITYSCORE_API_KEY", ""),
         }

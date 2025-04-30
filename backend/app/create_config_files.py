@@ -279,6 +279,7 @@ def create_geoipupdate_env(config):
     )
 
     path = DIR_PATH / "compose" / "production" / "geoipupdate" / ".geoipupdate"
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         f.write(content)
 

@@ -108,7 +108,10 @@ CACHE_URL = f"{REDIS_URL}/{CACHE_DB}"
 # security
 SECURITY_DB = int(redis_config["security_db"])
 SECURITY_URL = f"{REDIS_URL}/{SECURITY_DB}"
-ABUSEIPDB_API_KEY = security["abuseipdb_api"]
+ABUSEIPDB_API_KEY = security.get("abuseipdb_api", "")
+GEOIP_CITY_DB_PATH = str(BASE_DIR / "app" / "data" / "GeoLite2-City.mmdb")
+GEOIP_ASN_DB_PATH = str(BASE_DIR / "app" / "data" / "GeoLite2-ASN.mmdb")
+
 ABUSEIPDB_SUSPICIOUS_THRESHOLD = 20
 ABUSEIPDB_ATTACKER_THRESHOLD = 80
 AUTH_FAILURES_THRESHOLD = 5
