@@ -1349,7 +1349,7 @@ class IPSecurityManager:
 
             security_events_key = f"ip:{ip_address}:security_events"
             pipe.incr(security_events_key)
-            pipe.expire(security_events_key, 3600)  # 1 hour
+            pipe.expire(security_events_key, st.SECURITY_EVENTS_EXPIRES)
 
             event_id = str(uuid.uuid4())
             event_key = f"ip_event:{event_id}"
@@ -1360,7 +1360,7 @@ class IPSecurityManager:
                 "details": json.dumps(details or {}),
             }
             pipe.hset(event_key, mapping=event_data)
-            pipe.expire(event_key, 86400 * 7)  # 7 days
+            pipe.expire(event_key, st.IP_EVENT_EXPIRES)
 
             # Add to recent events list
             pipe.lpush("ip_security:recent_events", event_id)
@@ -1374,15 +1374,14 @@ class IPSecurityManager:
             await pipe.execute()
 
             events = int(await cls._redis_client.get(security_events_key) or 0)
-            # TODO: variable threshold
-            if events >= 5:  # threshold
+            if events >= st.MARK_IP_MALICIOUS_EVENTS_THRESHOLD:
                 reason = (
                     f"Multiple security events: {events} events of type {event_type}"
                 )
                 await cls.mark_malicious_ip(
                     ip_address,
                     reason,
-                    ttl=7200,  # 2 hours
+                    ttl=st.MARK_IP_MALICIOUS_EVENTS_EXPIRES,
                     severity="medium",
                 )
         except Exception as e:  # noqa: BLE001
