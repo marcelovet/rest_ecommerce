@@ -570,11 +570,11 @@ class IPSecurityManager:
                         network = ipaddress.ip_network(network_str)
                         if ip_obj in network:
                             return True, f"blocklist_network_match:{network_str}"
-                    except ValueError:
+                    except ValueError as e:
                         msg = f"Malicious IP check in network failed: {e}"
                         logger.warning(msg)
                         continue
-            except ValueError:
+            except ValueError as e:
                 msg = f"Malicious IP check in network failed: {e}"
                 logger.warning(msg)
 
@@ -1404,16 +1404,16 @@ class IPSecurityManager:
             )
             recent_suspicious = await cls._redis_client.smembers(
                 "ip_security:recent_suspicious",
-            )
+            )  # type: ignore[call]
 
             recent_event_ids = await cls._redis_client.lrange(
                 "ip_security:recent_events",
                 0,
                 9,
-            )
+            )  # type: ignore[call]
             recent_events = []
             for event_id in recent_event_ids:
-                event_data = await cls._redis_client.hgetall(f"ip_event:{event_id}")
+                event_data = await cls._redis_client.hgetall(f"ip_event:{event_id}")  # type: ignore[call]
                 if event_data:
                     try:
                         if "details" in event_data:
