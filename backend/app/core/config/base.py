@@ -32,6 +32,7 @@ mail_config = load_config(CONFIG_PATH, "mail")
 redis_config = load_config(CONFIG_PATH, "redis")
 jwt_config = load_config(CONFIG_PATH, "jwt")
 misc = load_config(CONFIG_PATH, "misc")
+security = load_config(CONFIG_PATH, "security")
 app_type = misc.get("app_type", "local")
 
 if app_type == "local":
@@ -103,9 +104,20 @@ REPOSITORY_URL = f"{REDIS_URL}/{REPOSITORY_DB}"
 CACHE_HOST = REDIS_HOST
 CACHE_DB = int(redis_config["cache_db"])
 CACHE_URL = f"{REDIS_URL}/{CACHE_DB}"
+
 # security
 SECURITY_DB = int(redis_config["security_db"])
 SECURITY_URL = f"{REDIS_URL}/{SECURITY_DB}"
+ABUSEIPDB_API_KEY = security["abuseipdb_api"]
+ABUSEIPDB_SUSPICIOUS_THRESHOLD = 20
+ABUSEIPDB_ATTACKER_THRESHOLD = 80
+SECURITY_DATA_EXPIRE = 24 * 60 * 60  # 1 day
+IP_REPUTATION_EXPIRE = 60 * 60  # 1 hour
+COUNTRY_ACCESS_EXPIRE = 60 * 60 * 24 * 180  # 180 days
+AUTH_FAILURES_THRESHOLD = 5
+SECURITY_EVENTS_THRESHOLD = 3
+RECENT_SUSPICIOUS_EXPIRE = 24 * 60 * 60  # 1 day
+IP_THREAT_EXPIRES = 24 * 60 * 60  # 1 day
 
 # frontend
 FRONTEND_DOMAIN = misc.get("front_end", "localhost:5173")

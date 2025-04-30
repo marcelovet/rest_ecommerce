@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import UTC
 from datetime import datetime
+from enum import Enum
 from typing import Any
 from typing import ClassVar
 
@@ -25,6 +26,15 @@ formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
+
+
+class ThreatLevelThreshold(int, Enum):
+    """Enum for threat levels and their corresponding thresholds"""
+
+    LOW = 0
+    MEDIUM = 30
+    HIGH = 50
+    CRITICAL = 80
 
 
 class IPSecurityManager:
@@ -88,26 +98,33 @@ class IPSecurityManager:
         "SD",
     }
     _update_task: ClassVar[asyncio.Task | None] = None
-    _blocklist_sources: ClassVar[list[str]] = [
+    _blocklist_sources_text: ClassVar[list[str]] = [
         "https://iplists.firehol.org/files/firehol_level1.netset",
         "https://raw.githubusercontent.com/stamparm/ipsum/master/levels/3.txt",
         "https://lists.blocklist.de/lists/all.txt",
-        "https://www.spamhaus.org/drop/drop.txt",
-        "https://www.spamhaus.org/drop/edrop.txt",
+    ]
+    _blocklist_sources_json: ClassVar[list[str]] = [
+        "https://www.spamhaus.org/drop/drop_v4.json",  # IPv4
+        "https://www.spamhaus.org/drop/drop_v6.json",  # IPv6
+    ]
+    _blocklist_asn: ClassVar[list[str]] = [
+        "https://www.spamhaus.org/drop/asndrop.json",  # ASN
     ]
     _geo_city_db_path: ClassVar[str] = ""
     _geo_asn_db_path: ClassVar[str] = ""
     _api_keys: ClassVar[dict[str, str]] = {}
 
     @classmethod
-    async def initialize(
+    async def initialize(  # noqa: PLR0913
         cls,
         redis_url: str | None = None,
         geo_city_db_path: str | None = None,
         geo_asn_db_path: str | None = None,
         api_keys: dict[str, str] | None = None,
         update_interval: int = 3600,
-        blocklist_sources: list[str] | None = None,
+        blocklist_sources_txt: list[str] | None = None,
+        blocklist_sources_json: list[str] | None = None,
+        blocklist_asn: list[str] | None = None,
         high_risk_countries: list[str] | None = None,
         datacenter_asns: list[int] | None = None,
     ) -> None:
@@ -119,7 +136,9 @@ class IPSecurityManager:
             geo_asn_db_path: Path to MaxMind GeoIP2 ASN database
             api_keys: Dictionary of API keys for external services
             update_interval: Interval for updating blocklists (in seconds)
-            blocklist_sources: List of IP blocklist URLs
+            blocklist_sources_txt: List of IP blocklist URLs (text format)
+            blocklist_sources_json: List of IP blocklist URLs (JSON format)
+            blocklist_asn: List of known ASN controlled by spammers or cyber criminals
             high_risk_countries: List of high-risk country codes
             datacenter_asns: List of ASNs for datacenters/hosting providers
         """
@@ -173,12 +192,17 @@ class IPSecurityManager:
         # Set up API keys
         cls._api_keys = api_keys or {
             "abuseipdb": getattr(st, "ABUSEIPDB_API_KEY", ""),
-            "ipqualityscore": getattr(st, "IPQUALITYSCORE_API_KEY", ""),
+            # in a enterprise setting, maybe use ipqualityscore
+            # "ipqualityscore": getattr(st, "IPQUALITYSCORE_API_KEY", ""),
         }
 
         # Set up other configuration
-        if blocklist_sources:
-            cls._blocklist_sources = blocklist_sources
+        if blocklist_sources_txt:
+            cls._blocklist_sources_text = blocklist_sources_txt
+        if blocklist_sources_json:
+            cls._blocklist_sources_json = blocklist_sources_json
+        if blocklist_asn:
+            cls._blocklist_asn = blocklist_asn
         if high_risk_countries:
             cls._high_risk_countries = set(high_risk_countries)
         if datacenter_asns:
@@ -189,17 +213,20 @@ class IPSecurityManager:
         cls._update_task = asyncio.create_task(cls._periodic_updates(update_interval))
 
         background_tasks = set()
+
         task1 = asyncio.create_task(cls._update_tor_exit_nodes())
         background_tasks.add(task1)
         task1.add_done_callback(background_tasks.discard)
+
         task2 = asyncio.create_task(cls._update_ip_blocklists())
         background_tasks.add(task2)
         task2.add_done_callback(background_tasks.discard)
+
         logger.info("IPSecurityManager initialized successfully")
 
     @classmethod
     async def shutdown(cls) -> None:
-        """Properly shut down the manager and clean up resources"""
+        """Shut down the manager and clean up resources"""
         if cls._update_task:
             cls._update_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -221,7 +248,7 @@ class IPSecurityManager:
                 await asyncio.sleep(interval)
 
                 background_tasks = set()
-                if time.time() - cls._last_tor_update > 86400:
+                if time.time() - cls._last_tor_update > st.SECURITY_DATA_EXPIRE:
                     task = asyncio.create_task(cls._update_tor_exit_nodes())
                     background_tasks.add(task)
                     task.add_done_callback(background_tasks.discard)
@@ -245,19 +272,17 @@ class IPSecurityManager:
                 aiohttp.ClientSession() as session,
                 session.get(
                     "https://check.torproject.org/exit-addresses",
-                    timeout=30,
+                    timeout=30,  # type: ignore[arg-type]
                 ) as response,
             ):
                 if response.status == status.HTTP_200_OK:
                     text = await response.text()
-                    new_nodes = set()
-
-                    for line in text.splitlines():
-                        if line.startswith("ExitAddress "):
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                new_nodes.add(parts[1])
-
+                    exit_addresses = [
+                        line.split()
+                        for line in text.splitlines()
+                        if line.startswith("ExitAddress ")
+                    ]
+                    new_nodes = {ip[1] for ip in exit_addresses if len(ip) >= 2}  # noqa: PLR2004
                     cls._tor_exit_nodes = new_nodes
                     cls._last_tor_update = time.time()
 
@@ -266,7 +291,10 @@ class IPSecurityManager:
                         pipe.delete("tor_exit_nodes")
                         if new_nodes:
                             pipe.sadd("tor_exit_nodes", *new_nodes)
-                        pipe.expire("tor_exit_nodes", 86400 * 2)  # 2 days
+                        pipe.expire(
+                            "tor_exit_nodes",
+                            st.SECURITY_DATA_EXPIRE * 2,
+                        )  # 2 days
                         await pipe.execute()
 
                     msg = f"Updated TOR exit nodes: {len(new_nodes)} nodes"
@@ -277,7 +305,7 @@ class IPSecurityManager:
 
             if cls._redis_client:
                 try:
-                    cached_nodes = await cls._redis_client.smembers("tor_exit_nodes")
+                    cached_nodes = await cls._redis_client.smembers("tor_exit_nodes")  # type: ignore[call]
                     if cached_nodes:
                         cls._tor_exit_nodes = cached_nodes
                         msg = f"Loaded {len(cached_nodes)} TOR exit nodes from cache"
@@ -287,62 +315,209 @@ class IPSecurityManager:
                     logger.exception(msg)
 
     @classmethod
+    async def _process_text_blocklist(
+        cls,
+        source: str,
+        session: aiohttp.ClientSession,
+    ) -> tuple[set[str], set[str]]:
+        """Process a text-based IP blocklist source.
+
+        Args:
+            source: URL of the blocklist source
+            session: Active aiohttp ClientSession
+
+        Returns:
+            Tuple containing (malicious_ips, malicious_networks)
+        """
+        malicious_ips = set()
+        malicious_networks = set()
+
+        try:
+            async with session.get(source, timeout=30) as response:  # type: ignore[arg-type]
+                if response.status == status.HTTP_200_OK:
+                    text = await response.text()
+                    lines = [
+                        line.strip()
+                        for line in text.splitlines()
+                        if line.strip() and not line.startswith("#")
+                    ]
+                    for line in lines:
+                        try:
+                            if "/" in line:
+                                network = ipaddress.ip_network(line)
+                                malicious_networks.add(str(network))
+                            else:
+                                ip = ipaddress.ip_address(line)
+                                malicious_ips.add(str(ip))
+                        except ValueError:
+                            continue
+        except Exception as e:  # noqa: BLE001
+            msg = f"Failed to process text blocklist from {source}: {e}"
+            logger.warning(msg)
+
+        return malicious_ips, malicious_networks
+
+    @classmethod
+    async def _process_json_blocklist(
+        cls,
+        source: str,
+        session: aiohttp.ClientSession,
+    ) -> tuple[set[str], set[str]]:
+        """Process a JSON-based IP blocklist source.
+        Actually, this is a implementation for spamhaus.org blocklist
+
+        Args:
+            source: URL of the blocklist source
+            session: Active aiohttp ClientSession
+
+        Returns:
+            Tuple containing (malicious_ips, malicious_networks)
+        """
+        malicious_ips = set()
+        malicious_networks = set()
+
+        try:
+            async with session.get(source, timeout=30) as response:  # type: ignore[arg-type]
+                if (
+                    response.status == status.HTTP_200_OK
+                    and response.content_type == "text/json"
+                ):
+                    text = await response.text()
+                    lines = [line.strip() for line in text.splitlines() if line.strip()]
+                    for line in lines:
+                        try:
+                            entry = json.loads(line)
+                            if "cidr" in entry:
+                                try:
+                                    if "/" in entry["cidr"]:
+                                        network = ipaddress.ip_network(entry["cidr"])
+                                        malicious_networks.add(str(network))
+                                    else:
+                                        ip = ipaddress.ip_address(entry["cidr"])
+                                        malicious_ips.add(str(ip))
+                                except ValueError:
+                                    continue
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:  # noqa: BLE001
+            msg = f"Failed to process JSON blocklist from {source}: {e}"
+            logger.warning(msg)
+
+        return malicious_ips, malicious_networks
+
+    @classmethod
+    async def _process_asn_blocklist(
+        cls,
+        source: str,
+        session: aiohttp.ClientSession,
+    ) -> set[str]:
+        """Process a JSON-based ASN blocklist source.
+        Actually, this is a implementation for spamhaus.org blocklist
+
+        Args:
+            source: URL of the blocklist source
+            session: Active aiohttp ClientSession
+
+        Returns:
+            Set containing malicious ASNs
+        """
+        malicious_asn = set()
+
+        try:
+            async with session.get(source, timeout=30) as response:  # type: ignore[arg-type]
+                if (
+                    response.status == status.HTTP_200_OK
+                    and response.content_type == "text/json"
+                ):
+                    text = await response.text()
+                    lines = [line.strip() for line in text.splitlines() if line.strip()]
+                    for line in lines:
+                        try:
+                            entry = json.loads(line)
+                            if "asn" in entry:
+                                malicious_asn.add(str(entry["asn"]))
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:  # noqa: BLE001
+            msg = f"Failed to process JSON blocklist from {source}: {e}"
+            logger.warning(msg)
+
+        return malicious_asn
+
+    @classmethod
     async def _update_ip_blocklists(cls) -> None:
         """Update IP blocklists from various sources"""
         try:
-            # Temporary sets to hold IPs and networks
             malicious_ips = set()
             malicious_networks = set()
 
             async with aiohttp.ClientSession() as session:
-                for source in cls._blocklist_sources:
-                    try:
-                        async with session.get(source, timeout=30) as response:
-                            if response.status == status.HTTP_200_OK:
-                                text = await response.text()
-                                for line in text.splitlines():
-                                    strip_line = line.strip()
-                                    if not strip_line or strip_line.startswith("#"):
-                                        continue
+                for source in cls._blocklist_sources_text:
+                    ips, networks = await cls._process_text_blocklist(source, session)
+                    malicious_ips.update(ips)
+                    malicious_networks.update(networks)
 
-                                    try:
-                                        if "/" in strip_line:
-                                            network = ipaddress.ip_network(strip_line)
-                                            malicious_networks.add(str(network))
-                                        else:
-                                            ip = ipaddress.ip_address(strip_line)
-                                            malicious_ips.add(str(ip))
-                                    except ValueError:
-                                        continue
-                    except Exception as e:  # noqa: BLE001
-                        msg = f"Failed to update blocklist from {source}: {e}"
-                        logger.warning(msg)
+                for source in cls._blocklist_sources_json:
+                    ips, networks = await cls._process_json_blocklist(source, session)
+                    malicious_ips.update(ips)
+                    malicious_networks.update(networks)
 
                 if cls._redis_client and (malicious_ips or malicious_networks):
                     pipe = cls._redis_client.pipeline()
 
                     if malicious_ips:
                         pipe.delete("malicious_ips")
-                        if malicious_ips:
-                            batch_size = 1000
-                            for i in range(0, len(malicious_ips), batch_size):
-                                batch = list(malicious_ips)[i : i + batch_size]
-                                pipe.sadd("malicious_ips", *batch)
-                        pipe.expire("malicious_ips", 86400)  # 24 hours
+                        batch_size = 1000
+                        for i in range(0, len(malicious_ips), batch_size):
+                            batch = list(malicious_ips)[i : i + batch_size]
+                            pipe.sadd("malicious_ips", *batch)
+                        pipe.expire("malicious_ips", st.SECURITY_DATA_EXPIRE)
 
                     if malicious_networks:
                         pipe.delete("malicious_networks")
-                        if malicious_networks:
-                            pipe.sadd("malicious_networks", *malicious_networks)
-                        pipe.expire("malicious_networks", 86400)  # 24 hours
+                        pipe.sadd("malicious_networks", *malicious_networks)
+                        pipe.expire("malicious_networks", st.SECURITY_DATA_EXPIRE)
 
                     await pipe.execute()
 
-                    msg = f"Updated IP blocklists: {len(malicious_ips)} IPs, {len(malicious_networks)} networks"
+                    msg = (
+                        f"Updated IP blocklists: {len(malicious_ips)} IPs, "
+                        f"{len(malicious_networks)} networks"
+                    )
                     logger.info(msg)
 
         except Exception as e:
             msg = f"Failed to update IP blocklists: {e}"
+            logger.exception(msg)
+
+    @classmethod
+    async def _update_asn_blocklists(cls) -> None:
+        """Update ASN blocklists from various sources"""
+        try:
+            malicious_asn = set()
+
+            async with aiohttp.ClientSession() as session:
+                for source in cls._blocklist_asn:
+                    asns = await cls._process_asn_blocklist(source, session)
+                    malicious_asn.update(asns)
+
+                if cls._redis_client and malicious_asn:
+                    pipe = cls._redis_client.pipeline()
+
+                    pipe.delete("malicious_asns")
+                    batch_size = 1000
+                    for i in range(0, len(malicious_asn), batch_size):
+                        batch = list(malicious_asn)[i : i + batch_size]
+                        pipe.sadd("malicious_asns", *batch)
+                    pipe.expire("malicious_asns", st.SECURITY_DATA_EXPIRE)
+
+                    await pipe.execute()
+
+                    msg = f"Updated ASN blocklists: {len(malicious_asn)} ASNs"
+                    logger.info(msg)
+
+        except Exception as e:
+            msg = f"Failed to update ASN blocklists: {e}"
             logger.exception(msg)
 
     @classmethod
@@ -352,7 +527,7 @@ class IPSecurityManager:
         expired_keys = []
 
         for ip, data in cls._ip_reputation_cache.items():
-            if now - data.get("timestamp", 0) > 3600:  # 1 hour expiration
+            if now - data.get("timestamp", 0) > st.IP_REPUTATION_EXPIRE:
                 expired_keys.append(ip)
 
         for key in expired_keys:
@@ -372,7 +547,7 @@ class IPSecurityManager:
     @classmethod
     async def _is_known_malicious_ip(cls, ip_address: str) -> tuple[bool, str]:
         """
-        Check if IP is in our database of known malicious IPs
+        Check if IP is in database of known malicious IPs
 
         Returns:
             Tuple[bool, str]: (is_malicious, reason)
@@ -384,27 +559,29 @@ class IPSecurityManager:
             is_malicious = await cls._redis_client.sismember(
                 "malicious_ips",
                 ip_address,
-            )
+            )  # type: ignore[call-arg]
             if is_malicious:
                 return True, "blocklist_direct_match"
             try:
                 ip_obj = ipaddress.ip_address(ip_address)
-                all_networks = await cls._redis_client.smembers("malicious_networks")
+                all_networks = await cls._redis_client.smembers("malicious_networks")  # type: ignore[call-arg]
                 for network_str in all_networks:
                     try:
                         network = ipaddress.ip_network(network_str)
                         if ip_obj in network:
                             return True, f"blocklist_network_match:{network_str}"
                     except ValueError:
+                        msg = f"Malicious IP check in network failed: {e}"
+                        logger.warning(msg)
                         continue
             except ValueError:
-                # Invalid IP
-                pass
+                msg = f"Malicious IP check in network failed: {e}"
+                logger.warning(msg)
 
             is_flagged = await cls._redis_client.sismember(
                 "flagged_malicious_ips",
                 ip_address,
-            )
+            )  # type: ignore[call-arg]
             if is_flagged:
                 reason = await cls._redis_client.get(f"flagged_ip:{ip_address}:reason")
                 return True, reason or "manually_flagged"
@@ -415,12 +592,36 @@ class IPSecurityManager:
         return False, ""
 
     @classmethod
+    async def _is_known_malicious_asn(cls, asn_number: str) -> bool:
+        """
+        Check if an ASN is in database of known flagged malicious ASNs
+
+        Returns:
+            Bool: True if ASN is known malicious, False otherwise
+        """
+        if not cls._redis_client:
+            return False
+
+        try:
+            is_malicious = await cls._redis_client.sismember(
+                "malicious_asns",
+                asn_number,
+            )  # type: ignore[call-arg]
+            if is_malicious:
+                return True
+        except Exception as e:  # noqa: BLE001
+            msg = f"Malicious ASN check failed: {e}"
+            logger.warning(msg)
+            return False
+        return False
+
+    @classmethod
     async def _check_ip_reputation(cls, ip_address: str) -> dict[str, Any]:
         """Check IP reputation using a third-party service"""
         cache_key = f"ip_rep:{ip_address}"
         if cache_key in cls._ip_reputation_cache:
             cached_result = cls._ip_reputation_cache[cache_key]
-            if time.time() - cached_result["timestamp"] < 3600:
+            if time.time() - cached_result["timestamp"] < st.IP_REPUTATION_EXPIRE:
                 return cached_result["data"]
         try:
             if cls._redis_client:
@@ -444,7 +645,7 @@ class IPSecurityManager:
                         "https://api.abuseipdb.com/api/v2/check",
                         params={"ipAddress": ip_address, "maxAgeInDays": 30},
                         headers={"Key": api_key, "Accept": "application/json"},
-                        timeout=5,
+                        timeout=5,  # type: ignore[call-arg]
                     ) as response:
                         if response.status == status.HTTP_200_OK:
                             result = await response.json()
@@ -457,12 +658,12 @@ class IPSecurityManager:
                                     "abuseConfidenceScore",
                                     0,
                                 )
-                                > 25,
+                                > st.ABUSEIPDB_SUSPICIOUS_THRESHOLD,
                                 "is_known_attacker": result.get("data", {}).get(
                                     "abuseConfidenceScore",
                                     0,
                                 )
-                                > 80,
+                                > st.ABUSEIPDB_ATTACKER_THRESHOLD,
                                 "country": result.get("data", {}).get("countryCode"),
                                 "isp": result.get("data", {}).get("isp"),
                                 "usage_type": result.get("data", {}).get("usageType"),
@@ -479,39 +680,7 @@ class IPSecurityManager:
                             if cls._redis_client:
                                 await cls._redis_client.setex(
                                     f"ip_reputation:{ip_address}",
-                                    3600,  # 1 hour
-                                    json.dumps(reputation_data),
-                                )
-                            return reputation_data
-                elif cls._api_keys.get("ipqualityscore"):
-                    # IPQualityScore
-                    api_key = cls._api_keys["ipqualityscore"]
-                    async with session.get(
-                        f"https://ipqualityscore.com/api/json/ip/{api_key}/{ip_address}",
-                        timeout=5,
-                    ) as response:
-                        if response.status == status.HTTP_200_OK:
-                            result = await response.json()
-                            reputation_data = {
-                                "score": result.get("fraud_score", 0),
-                                "is_suspicious": result.get("fraud_score", 0) > 75
-                                or result.get("proxy", False),
-                                "is_known_attacker": result.get("fraud_score", 0) > 90,
-                                "country": result.get("country_code"),
-                                "isp": result.get("ISP"),
-                                "is_proxy": result.get("proxy", False),
-                                "is_vpn": result.get("vpn", False),
-                                "is_tor": result.get("tor", False),
-                                "source": "ipqualityscore",
-                            }
-                            cls._ip_reputation_cache[cache_key] = {
-                                "timestamp": time.time(),
-                                "data": reputation_data,
-                            }
-                            if cls._redis_client:
-                                await cls._redis_client.setex(
-                                    f"ip_reputation:{ip_address}",
-                                    3600,  # 1 hour
+                                    st.IP_REPUTATION_EXPIRE,
                                     json.dumps(reputation_data),
                                 )
                             return reputation_data
@@ -530,7 +699,7 @@ class IPSecurityManager:
         }
 
     @classmethod
-    def _check_geoip_risk(cls, ip_address: str) -> dict[str, Any]:
+    async def _check_geoip_risk(cls, ip_address: str) -> dict[str, Any]:
         """Check geographic risk factors for an IP address"""
         try:
             # Check if IP is valid
@@ -585,11 +754,80 @@ class IPSecurityManager:
                 kw in asn_org for kw in cls._hosting_keywords
             ):
                 geo_data["is_datacenter"] = True
+            if asn:
+                with contextlib.suppress(Exception):
+                    is_malicious_asn = await cls._is_known_malicious_asn(str(asn))
+                    if is_malicious_asn:
+                        geo_data["is_malicious_asn"] = True
         except Exception as e:  # noqa: BLE001
             msg = f"GeoIP check failed: {e}"
             logger.warning(msg)
             return {}
         return geo_data
+
+    @classmethod
+    def _assess_threat_score(cls, threat_score: int) -> tuple[bool, str]:
+        """
+        Assess a threat score based on IP data and gives recommendations
+        on access control.
+
+        Args:
+            threat_score (int): The threat score to assess.
+
+        Returns:
+            tuple (bool, str): A tuple containing a boolean indicating whether
+            access should be allowed and a string indicating the recommended
+            access control action.
+        """
+        if threat_score >= ThreatLevelThreshold.CRITICAL:
+            return False, "block"
+        if threat_score >= ThreatLevelThreshold.HIGH:
+            return True, "challenge"
+        if threat_score >= ThreatLevelThreshold.MEDIUM:
+            return True, "monitor"
+        return True, "allow"
+
+    @classmethod
+    async def update_security_statistics(
+        cls,
+        ip_address: str,
+        is_suspicious: bool,  # noqa: FBT001
+        threat_score: int,
+        alerts: dict[str, Any],
+    ) -> None:
+        """
+        Update security statistics in Redis.
+
+        Args:
+            ip_address (str): The IP address.
+            is_suspicious (bool): Whether the IP address is suspicious.
+            threat_score (int): The threat score.
+            alerts (dict): The alerts about the IP address.
+        """
+        if cls._redis_client:
+            try:
+                pipe = cls._redis_client.pipeline()
+                pipe.incr("ip_security:checks_total")
+                if is_suspicious:
+                    pipe.incr("ip_security:suspicious_total")
+                    pipe.sadd("ip_security:recent_suspicious", ip_address)
+                    pipe.expire(
+                        "ip_security:recent_suspicious",
+                        st.RECENT_SUSPICIOUS_EXPIRE,
+                    )
+                    pipe.hset(
+                        f"ip:{ip_address}:threat",
+                        mapping={
+                            "score": threat_score,
+                            "timestamp": time.time(),
+                            "alerts": json.dumps(alerts),
+                        },
+                    )
+                    pipe.expire(f"ip:{ip_address}:threat", st.IP_THREAT_EXPIRES)
+                await pipe.execute()
+            except Exception as e:  # noqa: BLE001
+                msg = f"Failed to record IP security statistics: {e}"
+                logger.debug(msg)
 
     @classmethod
     async def check_ip_security(
@@ -610,7 +848,7 @@ class IPSecurityManager:
             context: Optional additional context
 
         Returns:
-            Dictionary with security assessment:
+            dict: Dictionary with security assessment:
             {
                 "is_suspicious": bool,
                 "threat_score": int,
@@ -677,12 +915,23 @@ class IPSecurityManager:
             threat_score += 20
 
         details["checks_performed"].append("geolocation")
-        geo_data = cls._check_geoip_risk(ip_address)
+        geo_data = await cls._check_geoip_risk(ip_address)
         details["geolocation"] = geo_data
 
         if geo_data.get("is_high_risk_country"):
             alerts["high_risk_country"] = geo_data.get("country_code")
             threat_score += 15
+
+        if geo_data.get("is_malicious_asn"):
+            alerts["known_malicious_datacenter_ip"] = {
+                "asn": geo_data.get("asn"),
+                "provider": geo_data.get("asn_org"),
+            }
+            threat_score += 50
+            details["known_malicious_datacenter_details"] = {
+                "asn": geo_data.get("asn"),
+                "provider": geo_data.get("asn_org"),
+            }
 
         if geo_data.get("is_datacenter"):
             # Only treat datacenters as suspicious for sensitive endpoints
@@ -717,7 +966,7 @@ class IPSecurityManager:
             try:
                 # Check user's previous countries
                 prev_countries_key = f"user:{user_id}:countries"
-                prev_countries = await cls._redis_client.smembers(prev_countries_key)
+                prev_countries = await cls._redis_client.smembers(prev_countries_key)  # type: ignore[call-arg]
 
                 if prev_countries:
                     details["previous_countries"] = list(prev_countries)
@@ -731,7 +980,7 @@ class IPSecurityManager:
                         details["unusual_country"] = True
                 pipe = cls._redis_client.pipeline()
                 pipe.sadd(prev_countries_key, user_country)
-                pipe.expire(prev_countries_key, 60 * 60 * 24 * 180)  # 180 days
+                pipe.expire(prev_countries_key, st.COUNTRY_ACCESS_EXPIRE)
                 await pipe.execute()
             except Exception as e:  # noqa: BLE001
                 details["user_location_error"] = str(e)
@@ -746,7 +995,7 @@ class IPSecurityManager:
                 if recent_failures:
                     failures = int(recent_failures)
                     details["recent_auth_failures"] = failures
-                    if failures >= 5:  # threshold
+                    if failures >= st.AUTH_FAILURES_THRESHOLD:
                         alerts["recent_auth_failures"] = failures
                         threat_score += min(failures * 5, 30)
 
@@ -755,7 +1004,7 @@ class IPSecurityManager:
                 if recent_events:
                     events = int(recent_events)
                     details["recent_security_events"] = events
-                    if events >= 3:  # threshold
+                    if events >= st.SECURITY_EVENTS_THRESHOLD:
                         alerts["recent_security_events"] = events
                         threat_score += min(events * 8, 40)
             except Exception as e:  # noqa: BLE001
@@ -763,45 +1012,18 @@ class IPSecurityManager:
                 msg = f"Recent activity check failed: {e}"
                 logger.warning(msg)
 
-        # TODO: set variable for threshold, maybe a int enum?
-        is_suspicious = threat_score >= 30
+        is_suspicious = threat_score >= ThreatLevelThreshold.MEDIUM
         details["threat_score"] = threat_score
         details["alerts"] = alerts
 
-        recommendation = "allow"
-        allow = True
-        if threat_score >= 80:
-            recommendation = "block"
-            allow = False
-        elif threat_score >= 50:
-            recommendation = "challenge"
-            allow = True
-        elif threat_score >= 30:
-            recommendation = "monitor"
-            allow = True
+        await cls.update_security_statistics(
+            ip_address,
+            is_suspicious,
+            threat_score,
+            alerts,
+        )
 
-        if cls._redis_client:
-            try:
-                pipe = cls._redis_client.pipeline()
-                pipe.incr("ip_security:checks_total")
-                if is_suspicious:
-                    pipe.incr("ip_security:suspicious_total")
-                    pipe.sadd("ip_security:recent_suspicious", ip_address)
-                    pipe.expire("ip_security:recent_suspicious", 86400)  # 1 day
-                    pipe.hset(
-                        f"ip:{ip_address}:threat",
-                        mapping={
-                            "score": threat_score,
-                            "timestamp": time.time(),
-                            "alerts": json.dumps(alerts),
-                        },
-                    )
-                    pipe.expire(f"ip:{ip_address}:threat", 86400)  # 1 day
-                await pipe.execute()
-            except Exception as e:  # noqa: BLE001
-                msg = f"Failed to record IP security statistics: {e}"
-                logger.debug(msg)
-
+        allow, recommendation = cls._assess_threat_score(threat_score)
         return {
             "is_suspicious": is_suspicious,
             "threat_score": threat_score,

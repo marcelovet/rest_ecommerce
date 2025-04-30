@@ -198,6 +198,9 @@ def create_config_ini():
     )
     config["misc"]["app_type"] = "local" if should_be_local else "production"
 
+    config["security"] = {}
+    config["security"]["abuseipdb_api"] = input("Set Your AbuseIPDB []: ") or ""
+
     if should_be_local:
         config["devel_mode"] = {}
         config["devel_mode"]["redis_host"] = (
