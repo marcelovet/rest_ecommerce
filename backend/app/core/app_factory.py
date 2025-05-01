@@ -4,6 +4,7 @@ from fastapi import FastAPI
 def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
 
+    from app.core.security import IPSecurityManager
     from app.services.auth_service.token_utils import TokenLogger
     from app.services.auth_service.token_utils import TokenSecurityMiddleware
 
@@ -17,8 +18,20 @@ def create_app() -> FastAPI:
             flush_interval=getattr(st, "TOKEN_LOG_FLUSH_INTERVAL", 5.0),
             start_background_task=True,
         )
+
+        await IPSecurityManager.initialize(
+            redis_url=st.REDIS_URL,
+            geo_city_db_path=st.GEO_CITY_DB_PATH,
+            geo_asn_db_path=st.GEO_ASN_DB_PATH,
+            api_keys={
+                "abuseipdb": st.ABUSEIPDB_API_KEY,
+            },
+        )
+
         yield
+
         await TokenLogger.shutdown()
+        await IPSecurityManager.shutdown()
 
     app = FastAPI(
         title="Ecommerce API",
