@@ -260,13 +260,11 @@ class IPSecurityManager:
     async def _update_tor_exit_nodes(cls) -> None:
         """Update the list of TOR exit nodes"""
         try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(
+            async with aiohttp.ClientSession() as session:
+                response = await session.get(
                     "https://check.torproject.org/exit-addresses",
                     timeout=30,  # type: ignore[arg-type]
-                ) as response,
-            ):
+                )
                 if response.status == status.HTTP_200_OK:
                     text = await response.text()
                     exit_addresses = [
@@ -325,24 +323,24 @@ class IPSecurityManager:
         malicious_networks = set()
 
         try:
-            async with session.get(source, timeout=30) as response:  # type: ignore[arg-type]
-                if response.status == status.HTTP_200_OK:
-                    text = await response.text()
-                    lines = [
-                        line.strip()
-                        for line in text.splitlines()
-                        if line.strip() and not line.startswith("#")
-                    ]
-                    for line in lines:
-                        try:
-                            if "/" in line:
-                                network = ipaddress.ip_network(line)
-                                malicious_networks.add(str(network))
-                            else:
-                                ip = ipaddress.ip_address(line)
-                                malicious_ips.add(str(ip))
-                        except ValueError:
-                            continue
+            response = await session.get(source, timeout=30)  # type: ignore[arg-type]
+            if response.status == status.HTTP_200_OK:
+                text = await response.text()
+                lines = [
+                    line.strip()
+                    for line in text.splitlines()
+                    if line.strip() and not line.startswith("#")
+                ]
+                for line in lines:
+                    try:
+                        if "/" in line:
+                            network = ipaddress.ip_network(line)
+                            malicious_networks.add(str(network))
+                        else:
+                            ip = ipaddress.ip_address(line)
+                            malicious_ips.add(str(ip))
+                    except ValueError:
+                        continue
         except Exception as e:  # noqa: BLE001
             msg = f"Failed to process text blocklist from {source}: {e}"
             logger.warning(msg)
@@ -369,28 +367,28 @@ class IPSecurityManager:
         malicious_networks = set()
 
         try:
-            async with session.get(source, timeout=30) as response:  # type: ignore[arg-type]
-                if (
-                    response.status == status.HTTP_200_OK
-                    and response.content_type == "text/json"
-                ):
-                    text = await response.text()
-                    lines = [line.strip() for line in text.splitlines() if line.strip()]
-                    for line in lines:
-                        try:
-                            entry = json.loads(line)
-                            if "cidr" in entry:
-                                try:
-                                    if "/" in entry["cidr"]:
-                                        network = ipaddress.ip_network(entry["cidr"])
-                                        malicious_networks.add(str(network))
-                                    else:
-                                        ip = ipaddress.ip_address(entry["cidr"])
-                                        malicious_ips.add(str(ip))
-                                except ValueError:
-                                    continue
-                        except json.JSONDecodeError:
-                            continue
+            response = await session.get(source, timeout=30)  # type: ignore[arg-type]
+            if (
+                response.status == status.HTTP_200_OK
+                and response.content_type == "text/json"
+            ):
+                text = await response.text()
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                for line in lines:
+                    try:
+                        entry = json.loads(line)
+                        if "cidr" in entry:
+                            try:
+                                if "/" in entry["cidr"]:
+                                    network = ipaddress.ip_network(entry["cidr"])
+                                    malicious_networks.add(str(network))
+                                else:
+                                    ip = ipaddress.ip_address(entry["cidr"])
+                                    malicious_ips.add(str(ip))
+                            except ValueError:
+                                continue
+                    except json.JSONDecodeError:
+                        continue
         except Exception as e:  # noqa: BLE001
             msg = f"Failed to process JSON blocklist from {source}: {e}"
             logger.warning(msg)
@@ -416,20 +414,20 @@ class IPSecurityManager:
         malicious_asn = set()
 
         try:
-            async with session.get(source, timeout=30) as response:  # type: ignore[arg-type]
-                if (
-                    response.status == status.HTTP_200_OK
-                    and response.content_type == "text/json"
-                ):
-                    text = await response.text()
-                    lines = [line.strip() for line in text.splitlines() if line.strip()]
-                    for line in lines:
-                        try:
-                            entry = json.loads(line)
-                            if "asn" in entry:
-                                malicious_asn.add(str(entry["asn"]))
-                        except json.JSONDecodeError:
-                            continue
+            response = await session.get(source, timeout=30)  # type: ignore[arg-type]
+            if (
+                response.status == status.HTTP_200_OK
+                and response.content_type == "text/json"
+            ):
+                text = await response.text()
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                for line in lines:
+                    try:
+                        entry = json.loads(line)
+                        if "asn" in entry:
+                            malicious_asn.add(str(entry["asn"]))
+                    except json.JSONDecodeError:
+                        continue
         except Exception as e:  # noqa: BLE001
             msg = f"Failed to process JSON blocklist from {source}: {e}"
             logger.warning(msg)
@@ -633,49 +631,49 @@ class IPSecurityManager:
                 if cls._api_keys.get("abuseipdb"):
                     # AbuseIPDB
                     api_key = cls._api_keys["abuseipdb"]
-                    async with session.get(
+                    response = await session.get(
                         "https://api.abuseipdb.com/api/v2/check",
                         params={"ipAddress": ip_address, "maxAgeInDays": 30},
                         headers={"Key": api_key, "Accept": "application/json"},
                         timeout=5,  # type: ignore[call-arg]
-                    ) as response:
-                        if response.status == status.HTTP_200_OK:
-                            result = await response.json()
-                            reputation_data = {
-                                "score": result.get("data", {}).get(
-                                    "abuseConfidenceScore",
-                                    0,
-                                ),
-                                "is_suspicious": result.get("data", {}).get(
-                                    "abuseConfidenceScore",
-                                    0,
-                                )
-                                > st.ABUSEIPDB_SUSPICIOUS_THRESHOLD,
-                                "is_known_attacker": result.get("data", {}).get(
-                                    "abuseConfidenceScore",
-                                    0,
-                                )
-                                > st.ABUSEIPDB_ATTACKER_THRESHOLD,
-                                "country": result.get("data", {}).get("countryCode"),
-                                "isp": result.get("data", {}).get("isp"),
-                                "usage_type": result.get("data", {}).get("usageType"),
-                                "reports": result.get("data", {}).get(
-                                    "totalReports",
-                                    0,
-                                ),
-                                "source": "abuseipdb",
-                            }
-                            cls._ip_reputation_cache[cache_key] = {
-                                "timestamp": time.time(),
-                                "data": reputation_data,
-                            }
-                            if cls._redis_client:
-                                await cls._redis_client.setex(
-                                    f"ip_reputation:{ip_address}",
-                                    st.IP_REPUTATION_EXPIRE,
-                                    json.dumps(reputation_data),
-                                )
-                            return reputation_data
+                    )
+                    if response.status == status.HTTP_200_OK:
+                        result = await response.json()
+                        reputation_data = {
+                            "score": result.get("data", {}).get(
+                                "abuseConfidenceScore",
+                                0,
+                            ),
+                            "is_suspicious": result.get("data", {}).get(
+                                "abuseConfidenceScore",
+                                0,
+                            )
+                            > st.ABUSEIPDB_SUSPICIOUS_THRESHOLD,
+                            "is_known_attacker": result.get("data", {}).get(
+                                "abuseConfidenceScore",
+                                0,
+                            )
+                            > st.ABUSEIPDB_ATTACKER_THRESHOLD,
+                            "country": result.get("data", {}).get("countryCode"),
+                            "isp": result.get("data", {}).get("isp"),
+                            "usage_type": result.get("data", {}).get("usageType"),
+                            "reports": result.get("data", {}).get(
+                                "totalReports",
+                                0,
+                            ),
+                            "source": "abuseipdb",
+                        }
+                        cls._ip_reputation_cache[cache_key] = {
+                            "timestamp": time.time(),
+                            "data": reputation_data,
+                        }
+                        if cls._redis_client:
+                            await cls._redis_client.setex(
+                                f"ip_reputation:{ip_address}",
+                                st.IP_REPUTATION_EXPIRE,
+                                json.dumps(reputation_data),
+                            )
+                        return reputation_data
         except Exception as e:  # noqa: BLE001
             msg = f"IP reputation check failed: {e}"
             logger.warning(msg)
@@ -1408,7 +1406,11 @@ class IPSecurityManager:
                 if event_data:
                     try:
                         if "details" in event_data:
-                            event_data["details"] = json.loads(event_data["details"])
+                            event_data["details"] = (
+                                json.loads(event_data["details"])
+                                if isinstance(event_data["details"], (str, bytes))
+                                else event_data["details"]
+                            )
                     except json.JSONDecodeError:
                         pass
                     recent_events.append(event_data)
