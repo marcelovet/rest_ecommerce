@@ -5,8 +5,8 @@ def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
 
     from app.security import IPSecurityManager
-    from app.services.auth_service.token_utils import TokenLogger
-    from app.services.auth_service.token_utils import TokenSecurityMiddleware
+    from app.services.jwt_service.token_utils import TokenLogger
+    from app.services.jwt_service.token_utils import TokenSecurityMiddleware
 
     from .celery_app import create_celery
     from .config import settings as st

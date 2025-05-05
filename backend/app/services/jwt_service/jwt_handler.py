@@ -20,9 +20,9 @@ from .token_factory import TokenFactory
 
 # Configure Redis client
 redis_client = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=0,
+    host=settings.REPOSITORY_HOST,
+    port=settings.REDIS_PORT,
+    db=settings.REPOSITORY_DB,
     decode_responses=True,
 )
 
