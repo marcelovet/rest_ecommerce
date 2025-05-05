@@ -1,4 +1,7 @@
+import tracemalloc
 import urllib.parse
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
@@ -24,6 +27,14 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def enable_tracemalloc():
+    """Enable tracemalloc for debugging ResourceWarnings."""
+    tracemalloc.start(20)  # Capture 20 frames
+    yield
+    tracemalloc.stop()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -90,3 +101,28 @@ def access_token_data_instance(token_data_instance):
             token_type=TokenType.REFRESH,
         ),
     )
+
+
+@pytest.fixture
+def mock_redis():
+    """Fixture to create a mock Redis client."""
+    mock = AsyncMock()
+    mock.ping = AsyncMock(return_value=True)
+    mock.get = AsyncMock(return_value=None)
+    mock.set = AsyncMock(return_value=True)
+    mock.setex = AsyncMock(return_value=True)
+    mock.sadd = AsyncMock(return_value=True)
+    mock.sismember = AsyncMock(return_value=False)
+    mock.smembers = AsyncMock(return_value=set())
+    mock.expire = AsyncMock(return_value=True)
+    mock.delete = AsyncMock(return_value=True)
+    mock.hset = AsyncMock(return_value=True)
+    mock.hgetall = AsyncMock(return_value={})
+    mock.incr = AsyncMock(return_value=1)
+    mock.lpush = AsyncMock(return_value=True)
+    mock.ltrim = AsyncMock(return_value=True)
+    mock.lrange = AsyncMock(return_value=[])
+    mock.pipeline = MagicMock(return_value=mock)
+    mock.execute = AsyncMock(return_value=[])
+    mock.close = AsyncMock(return_value=True)
+    return mock
