@@ -13,12 +13,6 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        TokenLogger.initialize(
-            max_batch_size=getattr(st, "TOKEN_LOG_BATCH_SIZE", 10),
-            flush_interval=getattr(st, "TOKEN_LOG_FLUSH_INTERVAL", 5.0),
-            start_background_task=True,
-        )
-
         await IPSecurityManager.initialize(
             redis_url=st.REDIS_URL,
             geo_city_db_path=st.GEOIP_CITY_DB_PATH,
@@ -26,6 +20,12 @@ def create_app() -> FastAPI:
             api_keys={
                 "abuseipdb": st.ABUSEIPDB_API_KEY,
             },
+        )
+
+        TokenLogger.initialize(
+            max_batch_size=getattr(st, "TOKEN_LOG_BATCH_SIZE", 10),
+            flush_interval=getattr(st, "TOKEN_LOG_FLUSH_INTERVAL", 5.0),
+            start_background_task=True,
         )
 
         yield

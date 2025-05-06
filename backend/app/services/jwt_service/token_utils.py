@@ -22,6 +22,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 
 from app.core.config import settings as st
+from app.exceptions import BlockedIPError
+from app.security import IPSecurityManager
 
 # Configure structured logger with proper formatting
 logger = logging.getLogger("token_security")
@@ -45,9 +47,6 @@ class TokenSecurityMetrics:
     # Store operation latencies
     operation_latencies = {}
 
-    # Store error rates
-    error_rates = {}
-
     @classmethod
     def record_operation(cls, event_type: str, duration_ms: int, success: bool):  # noqa: FBT001
         """Record an operation for metrics tracking"""
@@ -55,8 +54,8 @@ class TokenSecurityMetrics:
 
         # Record in appropriate time buckets
         minute_bucket = now - (now % 60)
-        five_min_bucket = now - (now % 300)
-        hour_bucket = now - (now % 3600)
+        five_min_bucket = now - (now % (60 * 5))
+        hour_bucket = now - (now % (60 * 60))
 
         buckets = {
             "1min": minute_bucket,
@@ -177,6 +176,16 @@ class TokenLogger:
             cls._background_task = asyncio.create_task(cls._background_flusher())
 
     @classmethod
+    async def shutdown(cls):
+        """Flush remaining logs and cleanup resources during application shutdown"""
+        if cls._background_task is not None:
+            cls._background_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cls._background_task
+            cls._background_task = None
+        await cls._flush_logs()
+
+    @classmethod
     async def _background_flusher(cls):
         """Background task that periodically flushes logs"""
         try:
@@ -189,16 +198,6 @@ class TokenLogger:
             if cls._log_queue or cls._critical_queue:
                 await cls._flush_logs()
             raise
-
-    @classmethod
-    async def shutdown(cls):
-        """Flush remaining logs and cleanup resources during application shutdown"""
-        if cls._background_task is not None:
-            cls._background_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await cls._background_task
-            cls._background_task = None
-        await cls._flush_logs()
 
     @classmethod
     async def _should_flush(cls) -> bool:
@@ -301,7 +300,9 @@ class TokenLogger:
 
         event_data["sequence"] = {
             "timestamp_ns": time.time_ns(),
-            "request_id": details.get("request_id") if details else str(uuid.uuid4()),
+            "request_id": details.get("request_id", str(uuid.uuid4()))
+            if details
+            else str(uuid.uuid4()),
         }
 
         # Record metrics if duration is provided
@@ -314,7 +315,7 @@ class TokenLogger:
                 stats = TokenSecurityMetrics.operation_latencies[token_type]
                 if stats["count"] > 10 and stats["total_ms"] > 0:  # noqa: PLR2004
                     avg_ms = stats["total_ms"] / stats["count"]
-                    if duration_ms > avg_ms * 3:  # 3x slower than average
+                    if duration_ms > (avg_ms * 3):  # 3x slower than average
                         event_data["performance_alert"] = {
                             "duration_ms": duration_ms,
                             "avg_ms": avg_ms,
@@ -344,15 +345,11 @@ class TokenLogger:
         if is_critical:
             cls._critical_queue.append(event_data)
             cls._trigger_security_alert(event_data)
-
-            # Schedule immediate flush for critical events
             task = asyncio.create_task(cls._flush_logs())
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
         else:
             cls._log_queue.append(event_data)
-
-            # Check if we should flush based on queue size or time
             if len(cls._log_queue) >= cls._max_batch_size:
                 task = asyncio.create_task(cls._flush_logs())
                 background_tasks.add(task)
@@ -544,12 +541,12 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
     ) -> tuple[str | None, Request]:
         """Extract token from request if possible"""
         token = None
-        auth_header = request.headers.get("Authorization")
+        auth_header = request.headers.get("authorization")
         if auth_header and " " in auth_header:
             _, token = auth_header.split(" ", 1)
             return token, request
 
-        content_type = request.headers.get("Content-Type", "")
+        content_type = request.headers.get("content-type", "")
 
         # TODO: set what events are expected to have a token in the body
         # events that expects a token in the body
@@ -711,6 +708,59 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
 
         TokenLogger.log_token_event(**log_data)
 
+    async def _assess_ip_security(self, log_data: dict[str, Any]) -> None:
+        """Evaluate IP address security"""
+        ip_security = {}
+        if log_data.get("client_ip"):
+            ip_security = await IPSecurityManager.check_ip_security(
+                ip_address=log_data["client_ip"],
+                user_id=log_data.get("user_id"),
+                request_path=log_data.get("details", {}).get("path"),
+            )
+        allow = ip_security.get("allow", True)
+        if not allow:
+            raise BlockedIPError
+
+    async def _assess_response_security(
+        self,
+        status_code: int,
+        log_data: dict[str, Any],
+        event_prefix: str,
+        error_detail: str | None = None,
+    ) -> None:
+        # Create response details for logging
+        if error_detail not in [
+            "Invalid token signature",
+            "Token has been revoked",
+            "Invalid credentials",
+        ]:
+            return
+        if log_data.get("client_ip") is None:
+            return
+
+        if error_detail == "Invalid credentials":
+            await IPSecurityManager.record_auth_failure(
+                ip_address=log_data.get("client_ip", ""),
+                user_id=log_data.get("user_id"),
+            )
+            return
+
+        details = {
+            "operation": "failed",
+            "phase": "response",
+            "request_id": log_data["request_id"],
+            "status_code": status_code,
+            "duration_ms": log_data["duration_ms"],
+        }
+        details["error"] = error_detail if error_detail else "Unknown error"
+        details["event_type"] = f"{event_prefix}_error"
+
+        await IPSecurityManager.record_security_event(
+            ip_address=log_data.get("client_ip", ""),
+            event_type=f"{event_prefix}_error",
+            details=details,
+        )
+
     async def _handle_request(
         self,
         request: Request,
@@ -719,8 +769,12 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
         path: str,
         event_prefix: str,
     ) -> tuple[dict[str, Any], str, Request]:
-        log_data["client_ip"] = request.client.host if request.client else None
-        log_data["user_agent"] = request.headers.get("User-Agent", "unknown")
+        ip_address = request.client.host if request.client else None
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            ip_address = forwarded_for
+        log_data["client_ip"] = ip_address
+        log_data["user_agent"] = request.headers.get("user-agent", "unknown")
 
         if not self._should_skip_token_eval_in_request(path):
             token, request = await self._extract_token_from_request(request, log_data)
@@ -781,6 +835,12 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
                     setattr(response, "_body", error_body)  # noqa: B010
                     error_data = json.loads(error_body)
                     error_detail = error_data.get("detail")
+                    await self._assess_response_security(
+                        response.status_code,
+                        log_data,
+                        event_prefix,
+                        error_detail,
+                    )
                 except json.JSONDecodeError as e:
                     msg = f"Failed to decode response body as JSON: {e!s}"
                     logger.debug(msg)
@@ -850,8 +910,18 @@ class TokenSecurityMiddleware(BaseHTTPMiddleware):
 
         error_detail = None
         start_time = time.perf_counter()
+
         try:
+            await self._assess_ip_security(log_data)
             response = await call_next(request)
+        except BlockedIPError:
+            log_data["success"] = False
+            error_detail = "IP address blocked"
+            status_code = status.HTTP_403_FORBIDDEN
+            response = JSONResponse(
+                content={"detail": "IP address blocked"},
+                status_code=status_code,
+            )
         except Exception as e:  # noqa: BLE001
             log_data["success"] = False
             error_detail = str(e)

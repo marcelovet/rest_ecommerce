@@ -1044,7 +1044,6 @@ class IPSecurityManager:
         *,
         user_id: str | None = None,
         request_path: str | None = None,
-        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         IP security check
@@ -1053,7 +1052,6 @@ class IPSecurityManager:
             ip_address: IP address to check
             user_id: Optional user ID for context-aware checks
             request_path: Optional request path for context-aware checks
-            context: Optional additional context
 
         Returns:
             dict: Dictionary with security assessment:
@@ -1086,7 +1084,6 @@ class IPSecurityManager:
             "timestamp": datetime.now(UTC).isoformat(),
             "checks_performed": [],
         }
-        context = context or {}
 
         check = cls._check_tor(ip_address)
         alerts, threat_score, details = cls._update_check_ip_data(

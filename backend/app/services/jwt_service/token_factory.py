@@ -66,7 +66,7 @@ class TokenFactory:
     def create_jti(self, prefix: str, user_id: str) -> str:
         """
         Generate a cryptographically secure JTI for the token.
-        Format: {prefix}-{timestamp}-{randomness}-{hash}
+        Format: {prefix}-{timestamp}-{randomness}-{user_component}-{hash}
         """
         timestamp = hex(int(time.time()))[2:]
         random_part = secrets.token_hex(8)

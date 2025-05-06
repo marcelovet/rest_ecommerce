@@ -4,26 +4,40 @@ class APIError(Exception):
     """
 
 
+# Config errors
 class SectionNotFoundError(APIError):
     pass
 
 
-class UserAlreadyExistsError(APIError):
+# Security errors
+class SecurityError(APIError):
     pass
 
 
-class UserServiceError(APIError):
+class BlockedIPError(SecurityError):
     pass
 
 
+# Auth service errors
 class AuthServiceError(APIError):
     pass
 
 
+class UserAlreadyExistsError(AuthServiceError):
+    pass
+
+
+# User service errors
+class UserServiceError(APIError):
+    pass
+
+
+# JWT service errors
 class TokenRevokedError(AuthServiceError):
     pass
 
 
+# Database errors
 class DatabaseError(APIError):
     pass
 

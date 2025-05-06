@@ -234,7 +234,7 @@ async def verify_token(token: str = Depends(oauth2_scheme)) -> dict[str, Any]:
         # TODO: signature is invalid, do something about it
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail="Invalid token signature",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.ExpiredSignatureError:
