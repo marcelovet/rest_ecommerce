@@ -33,7 +33,15 @@ class UserServiceError(APIError):
 
 
 # JWT service errors
-class TokenRevokedError(AuthServiceError):
+class JWTServiceError(APIError):
+    pass
+
+
+class TokenRevokedError(JWTServiceError):
+    pass
+
+
+class TokenRepositoryError(JWTServiceError):
     pass
 
 

@@ -1,13 +1,14 @@
+from datetime import UTC
+from datetime import datetime
 from datetime import timedelta
 from typing import Any
 
 import jwt
-from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import status
-from fastapi.security import OAuth2PasswordBearer
 
 from app.core.config import settings as st
+from app.exceptions import TokenRepositoryError
 from app.exceptions import TokenRevokedError
 from app.models.response_models import AccessTokenData
 from app.models.response_models import TokenData
@@ -17,17 +18,16 @@ from app.models.user import RoleEnum
 from app.services.jwt_service.token_factory import TokenFactory
 from app.services.jwt_service.token_repository import TokenRepository
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 
 class JWTHandler:
     """
     JWTHandler is a class that provides methods for handling JWT tokens.
     """
 
-    # TODO: change create_ methods to async since TokenRepository is async
-
-    async def verify_token(self, token: str = Depends(oauth2_scheme)) -> dict[str, Any]:
+    async def verify_access_token(
+        self,
+        token: str,
+    ) -> dict[str, Any]:
         """
         Verify token validity and check if it has been revoked
         """
@@ -126,7 +126,7 @@ class JWTHandler:
             algorithm=st.JWT_ALGORITHM,
         )
 
-    def create_access_token(  # noqa: PLR0913
+    async def create_access_token(  # noqa: PLR0913
         self,
         user_id: str,
         scopes: list[str] | None = None,
@@ -164,16 +164,19 @@ class JWTHandler:
             "audience": audience,
             "role": role,
         }
+        now = datetime.now(UTC)
         refresh_jti, refresh_token = self.create_token(
             TokenType.REFRESH,
             **tk_data,
             expires_delta=timedelta(seconds=st.REFRESH_TOKEN_EXPIRE),
             scopes=[],
         )
+        refresh_expiration = now + timedelta(seconds=st.REFRESH_TOKEN_EXPIRE)
         refresh_token_model = TokenData(
             token=refresh_token,
             token_type=TokenTypeModel.REFRESH,
         )
+
         access_jti, access_token = self.create_token(
             TokenType.ACCESS,
             **tk_data,
@@ -184,13 +187,31 @@ class JWTHandler:
             token=access_token,
             token_type=TokenTypeModel.ACCESS,
         )
-        # TODO: add jtis to token repository
+        access_expiration = now + timedelta(seconds=st.ACCESS_TOKEN_EXPIRE)
+
+        access_token_stored = await TokenRepository.store_jti(
+            jti=access_jti,
+            user_id=user_id,
+            expiration=access_expiration,
+        )
+        if not access_token_stored:
+            raise TokenRepositoryError
+
+        refresh_token_stored = await TokenRepository.store_refresh_token(
+            jti=refresh_jti,
+            user_id=user_id,
+            access_token_jti=access_jti,
+            expiration=refresh_expiration,
+        )
+        if not refresh_token_stored:
+            raise TokenRepositoryError
+
         return AccessTokenData(
             access_token=access_token_model,
             refresh_token=refresh_token_model,
         )
 
-    def create_limited_token(
+    async def create_limited_token(
         self,
         user_id: str,
         issuer: str = st.BACKEND_URL,
@@ -228,13 +249,21 @@ class JWTHandler:
             expires_delta=timedelta(seconds=st.LIMITED_TOKEN_EXPIRE),
             scopes=[],
         )
-        # TODO: add jtis to token repository
+        expiration = datetime.now(UTC) + timedelta(seconds=st.LIMITED_TOKEN_EXPIRE)
+        token_stored = await TokenRepository.store_jti(
+            jti=jti,
+            user_id=user_id,
+            expiration=expiration,
+        )
+        if not token_stored:
+            raise TokenRepositoryError
+
         return TokenData(
             token=limited_token,
             token_type=TokenTypeModel.ACCESS,
         )
 
-    def create_email_verification_token(
+    async def create_email_verification_token(
         self,
         user_id: str,
         issuer: str = st.BACKEND_URL,
@@ -272,13 +301,21 @@ class JWTHandler:
             expires_delta=timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE),
             scopes=[],
         )
-        # TODO: add jtis to token repository
+        expiration = datetime.now(UTC) + timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE)
+        token_stored = await TokenRepository.store_jti(
+            jti=jti,
+            user_id=user_id,
+            expiration=expiration,
+        )
+        if not token_stored:
+            raise TokenRepositoryError
+
         return TokenData(
             token=verification_token,
             token_type=TokenTypeModel.VERIFY,
         )
 
-    def create_password_reset_token(
+    async def create_password_reset_token(
         self,
         user_id: str,
         verified: bool = True,  # noqa: FBT001, FBT002
@@ -318,13 +355,23 @@ class JWTHandler:
             expires_delta=timedelta(seconds=st.RESET_PASSWORD_TOKEN_EXPIRE),
             scopes=[],
         )
-        # TODO: add jtis to token repository
+        expiration = datetime.now(UTC) + timedelta(
+            seconds=st.RESET_PASSWORD_TOKEN_EXPIRE,
+        )
+        token_stored = await TokenRepository.store_jti(
+            jti=jti,
+            user_id=user_id,
+            expiration=expiration,
+        )
+        if not token_stored:
+            raise TokenRepositoryError
+
         return TokenData(
             token=pwd_reset_token,
             token_type=TokenTypeModel.PASSWORD_RESET,
         )
 
-    def create_account_activation_token(
+    async def create_account_activation_token(
         self,
         user_id: str,
         verified: bool = True,  # noqa: FBT001, FBT002
@@ -364,10 +411,71 @@ class JWTHandler:
             expires_delta=timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE),
             scopes=[],
         )
-        # TODO: add jtis to token repository
+        expiration = datetime.now(UTC) + timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE)
+        token_stored = await TokenRepository.store_jti(
+            jti=jti,
+            user_id=user_id,
+            expiration=expiration,
+        )
+        if not token_stored:
+            raise TokenRepositoryError
+
         return TokenData(
             token=activation_token,
             token_type=TokenTypeModel.ACTIVATE,
+        )
+
+    async def refresh_token(  # noqa: PLR0913
+        self,
+        refresh_jti: str,
+        user_id: str,
+        scopes: list[str] | None = None,
+        verified: bool = True,  # noqa: FBT001, FBT002
+        issuer: str = st.BACKEND_URL,
+        audience: list[str] = st.BACKEND_CORS_ORIGINS,
+        role: RoleEnum = RoleEnum.CUSTOMER,
+    ) -> AccessTokenData:
+        """
+        Create an access token data for a user with an access and a refresh token
+        in the flow of the refresh token.
+
+        The actual refresh token is deleted and associated access token is revoked.
+        Token's jti are generated and stored in the database for validation/revocation.
+
+        This method is intended to create access/refresh tokens for users who has
+        a valid refresh token.
+
+        Note:
+            this method assumes that the refresh token was already validated
+
+        Args:
+            refresh_jti (str): The refresh token's jti
+            user_id (str): The user ID
+            scopes (list[str] | None): additional scopes for the token beyond the
+            default
+            verified (bool): Whether the user has email verified
+            issuer (str): The issuer of the token
+            audience (list[str]): The audience for the token
+            role (RoleEnum): The role of the user
+
+        Returns:
+            AccessTokenData: pydantic model with access and refresh tokens
+        """
+        # Revoke the refresh token
+        refresh_token_revoked = await TokenRepository.delete_refresh_token(
+            user_id=user_id,
+            refresh_jti=refresh_jti,
+        )
+        if not refresh_token_revoked:
+            raise TokenRepositoryError
+
+        return await self.create_access_token(
+            user_id=user_id,
+            scopes=scopes,
+            verified=verified,
+            issuer=issuer,
+            audience=audience,
+            role=role,
         )
 
     def fetch_scopes(self, scope: str) -> dict[str, Any]:

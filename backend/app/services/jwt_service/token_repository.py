@@ -201,6 +201,44 @@ class TokenRepository:
             return None
 
     @classmethod
+    async def delete_refresh_token(cls, user_id: str, refresh_jti: str) -> bool:
+        """Removes a refresh token for and revoke its associated access token"""
+        try:
+            # Get all refresh tokens for the user
+            user_refresh_key = f"user:{user_id}:refresh_tokens"
+            refresh_tokens = await cls.__redis_client().smembers(user_refresh_key)  # type: ignore[call-arg]
+
+            pipe = cls.__redis_client().pipeline()
+
+            # Mark each access token as revoked and delete refresh token
+            for jti in refresh_tokens:
+                if jti != refresh_jti:
+                    continue
+                # Get linked access token
+                key = f"refresh_token:{jti}"
+                token_data_json = await cls.__redis_client().get(key)
+
+                if token_data_json:
+                    token_data = json.loads(token_data_json)
+                    access_token_jti = token_data.get("access_token_jti")
+
+                    # Revoke access token if it exists
+                    if access_token_jti:
+                        pipe.set(
+                            f"revoked:jti:{access_token_jti}",
+                            "1",
+                        )
+                pipe.delete(key)
+            await pipe.execute()
+            # Remove the refresh token from the user's list
+            await cls.__redis_client().srem(user_refresh_key, refresh_jti)  # type: ignore[call-arg]
+        except Exception as e:
+            msg = f"Error revoking all user tokens: {e}"
+            logger.exception(msg)
+            return False
+        return True
+
+    @classmethod
     async def revoke_all_user_tokens(cls, user_id: str) -> bool:
         """Revoke all tokens for a user (for logout from all devices)"""
         try:
@@ -210,7 +248,7 @@ class TokenRepository:
 
             pipe = cls.__redis_client().pipeline()
 
-            # Mark each refresh token as revoked
+            # Mark each access token as revoked and delete refresh tokens
             for jti in refresh_tokens:
                 # Get linked access token
                 key = f"refresh_token:{jti}"
