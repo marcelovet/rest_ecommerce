@@ -160,3 +160,8 @@ TokenFactory.register_token_type(
     TokenType.REFRESH,
     ["refresh:token"],
 )
+
+TokenFactory.register_token_type(
+    TokenType.ACTIVATE,
+    ["activate:account"],
+)
