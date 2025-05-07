@@ -5,6 +5,7 @@ def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
 
     from app.security import IPSecurityManager
+    from app.services.jwt_service.token_repository import TokenRepository
     from app.services.jwt_service.token_utils import TokenLogger
     from app.services.jwt_service.token_utils import TokenSecurityMiddleware
 
@@ -28,8 +29,11 @@ def create_app() -> FastAPI:
             start_background_task=True,
         )
 
+        await TokenRepository.initialize(redis_url=st.REPOSITORY_URL)
+
         yield
 
+        await TokenRepository.shutdown()
         await TokenLogger.shutdown()
         await IPSecurityManager.shutdown()
 

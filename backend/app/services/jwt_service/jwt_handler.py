@@ -107,14 +107,20 @@ class JWTHandler:
         self,
         token_type: TokenType,
         **kwargs: Any,
-    ) -> str:
+    ) -> tuple[str, str]:
         """
         Create a JWT with appropriate claims including a unique jti
+
+        Args:
+            token_type: The type of token to create.
+            **kwargs: Additional keyword arguments to pass to the token factory.
+
+        Returns:
+            tuple: A tuple containing the JTI and the encoded JWT.
         """
         token_factory = TokenFactory(token_type)
         token_data = token_factory(**kwargs)
-        # TODO: Must return jwt and jti for token repository
-        return jwt.encode(
+        return token_data.get("jti", ""), jwt.encode(
             token_data,
             st.PRIVATE_KEY,
             algorithm=st.JWT_ALGORITHM,
@@ -158,7 +164,7 @@ class JWTHandler:
             "audience": audience,
             "role": role,
         }
-        refresh_token = self.create_token(
+        refresh_jti, refresh_token = self.create_token(
             TokenType.REFRESH,
             **tk_data,
             expires_delta=timedelta(seconds=st.REFRESH_TOKEN_EXPIRE),
@@ -168,7 +174,7 @@ class JWTHandler:
             token=refresh_token,
             token_type=TokenTypeModel.REFRESH,
         )
-        access_token = self.create_token(
+        access_jti, access_token = self.create_token(
             TokenType.ACCESS,
             **tk_data,
             expires_delta=timedelta(seconds=st.ACCESS_TOKEN_EXPIRE),
@@ -216,7 +222,7 @@ class JWTHandler:
             "audience": audience,
             "role": role,
         }
-        limited_token = self.create_token(
+        jti, limited_token = self.create_token(
             TokenType.LIMITED,
             **tk_data,
             expires_delta=timedelta(seconds=st.LIMITED_TOKEN_EXPIRE),
@@ -260,7 +266,7 @@ class JWTHandler:
             "audience": audience,
             "role": role,
         }
-        verification_token = self.create_token(
+        jti, verification_token = self.create_token(
             TokenType.VERIFY,
             **tk_data,
             expires_delta=timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE),
@@ -306,7 +312,7 @@ class JWTHandler:
             "audience": audience,
             "role": role,
         }
-        pwd_reset_token = self.create_token(
+        jti, pwd_reset_token = self.create_token(
             TokenType.PASSWORD_RESET,
             **tk_data,
             expires_delta=timedelta(seconds=st.RESET_PASSWORD_TOKEN_EXPIRE),
@@ -352,7 +358,7 @@ class JWTHandler:
             "audience": audience,
             "role": role,
         }
-        activation_token = self.create_token(
+        jti, activation_token = self.create_token(
             TokenType.ACTIVATE,
             **tk_data,
             expires_delta=timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE),
