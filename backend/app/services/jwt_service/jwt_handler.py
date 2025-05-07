@@ -24,9 +24,10 @@ class JWTHandler:
     JWTHandler is a class that provides methods for handling JWT tokens.
     """
 
-    async def verify_access_token(
+    async def verify_token(
         self,
         token: str,
+        token_type: TokenType = TokenType.ACCESS,
     ) -> dict[str, Any]:
         """
         Verify token validity and check if it has been revoked

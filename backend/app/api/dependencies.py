@@ -6,6 +6,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.security import HTTPBearer
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.db.session import Session as DbSession
@@ -29,6 +30,9 @@ def get_auth_service(db: db_dependency) -> AuthService:
 
 
 auth_service_dependency = Annotated[AuthService, Depends(get_auth_service)]
+
+# for login (form data with username and password)
+oauth2_pwd_access_dependency = Annotated[OAuth2PasswordRequestForm, Depends()]
 
 # for access tokens
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
