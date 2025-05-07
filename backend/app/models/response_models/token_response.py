@@ -13,8 +13,8 @@ class TokenType(str, Enum):
     ACCESS = "bearer"  # Standard OAuth2 access token
     REFRESH = "refresh"  # For refresh tokens
     VERIFY = "verify"  # For email verification
-    RESET = "reset"  # For password reset
-    ACTIVATION = "activation"  # For account activation
+    PASSWORD_RESET = "reset"  # For password reset  # noqa: S105
+    ACTIVATE = "activation"  # For account activation
 
 
 class TokenData(BaseModel):
@@ -52,7 +52,7 @@ class TokenData(BaseModel):
 
 
 class AccessTokenData(BaseModel):
-    """Response model for token data."""
+    """Response model for access token data."""
 
     access_token: TokenData
     refresh_token: TokenData

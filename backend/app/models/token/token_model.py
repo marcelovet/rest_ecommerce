@@ -13,9 +13,9 @@ class TokenType(str, Enum):
 
     ACCESS = "tk"
     LIMITED = "lt"
+    REFRESH = "rt"
     VERIFY = "vt"
     PASSWORD_RESET = "pt"  # noqa: S105
-    REFRESH = "rt"
     ACTIVATE = "ac"
 
 

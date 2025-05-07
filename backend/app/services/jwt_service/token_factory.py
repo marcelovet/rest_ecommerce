@@ -83,7 +83,7 @@ class TokenFactory:
         scopes: list[str],
         verified: bool = False,  # noqa: FBT001, FBT002
         expires_delta: timedelta | None = None,
-        issuer: str = settings.DOMAIN,
+        issuer: str = settings.BACKEND_URL,
         audience: list[str] = settings.BACKEND_CORS_ORIGINS,
         role: RoleEnum = RoleEnum.CUSTOMER,
     ) -> dict[str, Any]:
