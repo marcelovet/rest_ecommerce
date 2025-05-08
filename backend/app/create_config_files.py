@@ -152,6 +152,7 @@ def create_config_ini():
     config["redis"]["repository_db"] = str(1)
     config["redis"]["cache_db"] = str(2)
     config["redis"]["security_db"] = str(3)
+    config["redis"]["rate_limit_db"] = str(4)
 
     # JWT section
     config["jwt"] = {}

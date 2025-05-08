@@ -4,6 +4,7 @@ from fastapi import FastAPI
 def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
 
+    from app.core.rate_limiter import RateLimiterManager
     from app.security import IPSecurityManager
     from app.services.jwt_service.token_repository import TokenRepository
     from app.services.jwt_service.token_utils import TokenLogger
@@ -31,8 +32,11 @@ def create_app() -> FastAPI:
 
         await TokenRepository.initialize(redis_url=st.REPOSITORY_URL)
 
+        await RateLimiterManager.initialize(redis_url=st.RATE_LIMITER_URL)
+
         yield
 
+        await RateLimiterManager.shutdown()
         await TokenRepository.shutdown()
         await TokenLogger.shutdown()
         await IPSecurityManager.shutdown()

@@ -12,7 +12,7 @@ from redis.exceptions import RedisError
 from app.core.config import settings as st
 from app.exceptions import TokenRevokedError
 
-# Configure IP security logger
+# Configure Token Repository logger
 logger = logging.getLogger("token_repository")
 handler = logging.StreamHandler()
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -24,8 +24,8 @@ logger.setLevel(logging.INFO)
 class TokenRepository:
     """Handle token storage and validation for revocation checks"""
 
-    _initialized: ClassVar[bool] = False
-    _redis_client: ClassVar[Redis | None] = None
+    __initialized: ClassVar[bool] = False
+    __redis_client: ClassVar[Redis | None] = None
 
     @classmethod
     async def initialize(
@@ -37,29 +37,29 @@ class TokenRepository:
         Args:
             redis_url: Redis connection URL
         """
-        if cls._initialized:
+        if cls.__initialized:
             return
 
         if redis_url:
             try:
-                cls._redis_client = redis.from_url(
+                cls.__redis_client = redis.from_url(
                     redis_url,
                     decode_responses=True,
                 )
                 await cls._redis_client.ping()
                 logger.info("Token Repository connected to Redis")
-                cls._initialized = True
+                cls.__initialized = True
             except Exception as e:
                 msg = f"Failed to connect to Redis: {e}"
                 logger.exception(msg)
-                cls._redis_client = None
+                cls.__redis_client = None
         else:
             try:
                 redis_host = getattr(st, "REPOSITORY_HOST", "localhost")
                 redis_port = getattr(st, "REDIS_PORT", 6379)
                 redis_db = getattr(st, "REPOSITORY_DB", 1)
 
-                cls._redis_client = redis.Redis(
+                cls.__redis_client = redis.Redis(
                     host=redis_host,
                     port=redis_port,
                     db=redis_db,
@@ -67,29 +67,29 @@ class TokenRepository:
                 )
                 await cls._redis_client.ping()
                 logger.info("Token Repository connected to Redis")
-                cls._initialized = True
+                cls.__initialized = True
             except Exception as e:
                 msg = f"Failed to connect to Redis: {e}"
                 logger.exception(msg)
-                cls._redis_client = None
+                cls.__redis_client = None
 
     @classmethod
     async def shutdown(cls) -> None:
         """Shut down the manager and clean up resources"""
-        if cls._redis_client:
-            await cls._redis_client.close()
-            cls._redis_client = None
+        if cls.__redis_client:
+            await cls.__redis_client.close()
+            cls.__redis_client = None
 
-        cls._initialized = False
+        cls.__initialized = False
         logger.info("Token Repository shutdown complete")
 
     @classmethod
-    def __redis_client(cls) -> Redis:
+    def _redis_client(cls) -> Redis:
         """Get the Redis client"""
-        if not isinstance(cls._redis_client, Redis):
+        if not isinstance(cls.__redis_client, Redis):
             msg = "Redis client not initialized"
             raise RedisError(msg)
-        return cls._redis_client
+        return cls.__redis_client
 
     @classmethod
     async def store_jti(cls, jti: str, user_id: str, expiration: datetime) -> bool:
@@ -101,7 +101,7 @@ class TokenRepository:
         try:
             ttl = int((expiration - datetime.now(UTC)).total_seconds())
             key = f"jti:{jti}"
-            await cls.__redis_client().setex(key, ttl, user_id)
+            await cls._redis_client().setex(key, ttl, user_id)
         except Exception as e:
             msg = f"Error when storing JTI: {e}"
             logger.exception(msg)
@@ -119,7 +119,7 @@ class TokenRepository:
         """
         try:
             key = f"revoked:jti:{jti}"
-            return await cls.__redis_client().exists(key) == 1
+            return await cls._redis_client().exists(key) == 1
         except Exception as e:
             msg = f"Redis error when checking revoked JTI: {e}"
             logger.exception(msg)
@@ -149,7 +149,7 @@ class TokenRepository:
                 return True  # Token already expired
             # Mark as revoked
             key = f"revoked:jti:{jti}"
-            await cls.__redis_client().setex(key, ttl, "1")
+            await cls._redis_client().setex(key, ttl, "1")
         except Exception as e:
             msg = f"Redis error when revoking JTI: {e}"
             logger.exception(msg)
@@ -175,11 +175,11 @@ class TokenRepository:
                     "created_at": datetime.now(UTC).isoformat(),
                 },
             )
-            await cls.__redis_client().setex(key, ttl, value)
+            await cls._redis_client().setex(key, ttl, value)
 
             # Also track by user for multi-device management
             user_refresh_key = f"user:{user_id}:refresh_tokens"
-            await cls.__redis_client().sadd(user_refresh_key, jti)  # type: ignore[call-arg]
+            await cls._redis_client().sadd(user_refresh_key, jti)  # type: ignore[call-arg]
         except Exception as e:
             msg = f"Redis error when storing refresh token: {e}"
             logger.exception(msg)
@@ -191,7 +191,7 @@ class TokenRepository:
         """Validate a refresh token JTI and return associated metadata"""
         try:
             key = f"refresh_token:{jti}"
-            token_data_json = await cls.__redis_client().get(key)
+            token_data_json = await cls._redis_client().get(key)
             if not token_data_json:
                 return None  # Token not found or expired
             return json.loads(token_data_json)
@@ -206,9 +206,9 @@ class TokenRepository:
         try:
             # Get all refresh tokens for the user
             user_refresh_key = f"user:{user_id}:refresh_tokens"
-            refresh_tokens = await cls.__redis_client().smembers(user_refresh_key)  # type: ignore[call-arg]
+            refresh_tokens = await cls._redis_client().smembers(user_refresh_key)  # type: ignore[call-arg]
 
-            pipe = cls.__redis_client().pipeline()
+            pipe = cls._redis_client().pipeline()
 
             # Mark each access token as revoked and delete refresh token
             for jti in refresh_tokens:
@@ -216,7 +216,7 @@ class TokenRepository:
                     continue
                 # Get linked access token
                 key = f"refresh_token:{jti}"
-                token_data_json = await cls.__redis_client().get(key)
+                token_data_json = await cls._redis_client().get(key)
 
                 if token_data_json:
                     token_data = json.loads(token_data_json)
@@ -231,7 +231,7 @@ class TokenRepository:
                 pipe.delete(key)
             await pipe.execute()
             # Remove the refresh token from the user's list
-            await cls.__redis_client().srem(user_refresh_key, refresh_jti)  # type: ignore[call-arg]
+            await cls._redis_client().srem(user_refresh_key, refresh_jti)  # type: ignore[call-arg]
         except Exception as e:
             msg = f"Error revoking all user tokens: {e}"
             logger.exception(msg)
@@ -244,15 +244,15 @@ class TokenRepository:
         try:
             # Get all refresh tokens for the user
             user_refresh_key = f"user:{user_id}:refresh_tokens"
-            refresh_tokens = await cls.__redis_client().smembers(user_refresh_key)  # type: ignore[call-arg]
+            refresh_tokens = await cls._redis_client().smembers(user_refresh_key)  # type: ignore[call-arg]
 
-            pipe = cls.__redis_client().pipeline()
+            pipe = cls._redis_client().pipeline()
 
             # Mark each access token as revoked and delete refresh tokens
             for jti in refresh_tokens:
                 # Get linked access token
                 key = f"refresh_token:{jti}"
-                token_data_json = await cls.__redis_client().get(key)
+                token_data_json = await cls._redis_client().get(key)
 
                 if token_data_json:
                     token_data = json.loads(token_data_json)

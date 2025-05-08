@@ -104,6 +104,10 @@ REPOSITORY_URL = f"{REDIS_URL}/{REPOSITORY_DB}"
 CACHE_HOST = REDIS_HOST
 CACHE_DB = int(redis_config["cache_db"])
 CACHE_URL = f"{REDIS_URL}/{CACHE_DB}"
+# rate limiter
+RATE_LIMITER_HOST = REDIS_HOST
+RATE_LIMITER_DB = int(redis_config["rate_limit_db"])
+RATE_LIMITER_URL = f"{REDIS_URL}/{RATE_LIMITER_DB}"
 
 # security
 SECURITY_DB = int(redis_config["security_db"])

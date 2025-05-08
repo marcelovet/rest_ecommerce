@@ -57,6 +57,10 @@ class Settings:
     CACHE_DB: int
     CACHE_URL: str
 
+    RATE_LIMITER_HOST: str
+    RATE_LIMITER_DB: int
+    RATE_LIMITER_URL: str
+
     SECURITY_DB: int
     SECURITY_URL: str
     ABUSEIPDB_API_KEY: str
