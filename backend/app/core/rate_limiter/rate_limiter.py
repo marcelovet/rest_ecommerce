@@ -15,6 +15,32 @@ from .utils import WindowType
 
 
 class RateLimiter:
+    """
+    RateLimiter is a class that provides methods for rate limiting.
+    This class is intended to be used as dependency for FastAPI routes.
+
+    Example:
+    ```python
+    from typing import Annotated
+    from contextlib import asynccontextmanager
+
+    from fastapi import Depends, FastAPI
+    from rate_limiter import RateLimiter, RateLimiterManager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await RateLimiterManager.initialize(redis_url="redis://localhost:6379/0")
+        yield
+        await RateLimiterManager.shutdown()
+
+    app = FastAPI()
+
+    # accepts 2 requests per 5 seconds per IP (default)
+    @app.get("/foo", dependencies=[Depends(RateLimiter(times=2, seconds=5))])
+    async def get_foo():
+        return {"foo": 1}
+    """
+
     def __init__(  # noqa: PLR0913
         self,
         *,
@@ -92,6 +118,39 @@ class RateLimiter:
 
 
 class WebSocketRateLimiter:
+    """
+    WebSocketRateLimiter is a class that provides methods for rate limiting
+    data transfer over the socket.
+
+    Example:
+    ```python
+    from typing import Annotated
+    from contextlib import asynccontextmanager
+
+    from fastapi import WebSocket, FastAPI
+    from rate_limiter import WebSocketRateLimiter, RateLimiterManager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await RateLimiterManager.initialize(redis_url="redis://localhost:6379/0")
+        yield
+        await RateLimiterManager.shutdown()
+
+    app = FastAPI()
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        ratelimit = WebSocketRateLimiter(times=1, seconds=1)
+        while True:
+            try:
+                data = await websocket.receive_text()
+                await ratelimit(websocket)
+                await websocket.send_text(f"Hello, world")
+            except WebSocketRateLimitException:
+                await websocket.send_text(f"Hello again")
+    """
+
     def __init__(  # noqa: PLR0913
         self,
         *,
