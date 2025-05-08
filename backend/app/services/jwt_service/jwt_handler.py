@@ -8,15 +8,18 @@ from fastapi import HTTPException
 from fastapi import status
 
 from app.core.config import settings as st
-from app.exceptions import TokenRepositoryError
-from app.exceptions import TokenRevokedError
 from app.models.response_models import AccessTokenData
 from app.models.response_models import TokenData
 from app.models.response_models import TokenType as TokenTypeModel
+from app.models.token import ScopeModel
 from app.models.token import TokenType
 from app.models.user import RoleEnum
 from app.services.jwt_service.token_factory import TokenFactory
 from app.services.jwt_service.token_repository import TokenRepository
+
+from .exceptions import MissingRequiredScopeError
+from .exceptions import TokenRepositoryError
+from .exceptions import TokenRevokedError
 
 
 class JWTHandler:
@@ -24,10 +27,76 @@ class JWTHandler:
     JWTHandler is a class that provides methods for handling JWT tokens.
     """
 
+    def validate_scopes(
+        self,
+        token_type: TokenType,
+        token_scope: str | None,
+        scopes: ScopeModel | None = None,
+        required_scopes: ScopeModel | None = None,
+    ) -> None:
+        """
+        Validate if token has required scopes for the action.
+        """
+        self._assess_token_scope(
+            token_scope,
+            TokenFactory.registry[token_type]["base_scopes"][0],
+        )
+
+        if required_scopes is not None:
+            if scopes is None:
+                msg = "Provided token has no scope for this action"
+                raise MissingRequiredScopeError(msg)
+            self._assess_scopes(scopes.read, required_scopes.read)
+            self._assess_scopes(scopes.update, required_scopes.update)
+            self._assess_scopes(scopes.delete, required_scopes.delete)
+            self._assess_scopes(scopes.create, required_scopes.create)
+
+    def _assess_token_scope(
+        self,
+        token_scope: str | None,
+        required_scope: str,
+    ) -> None:
+        """
+        Validate if the token scopes match the required base token_scope.
+
+        Args:
+            token_scope (str): token_scope of the token to validate.
+            required_scope (str): required base token_scope.
+
+        Raises:
+            MissingRequiredScopeError: If the token scopes do not match the required base token_scope.
+        """  # noqa: E501
+        if token_scope is None or token_scope != required_scope:
+            msg = "Provided token has no scope for this action"
+            raise MissingRequiredScopeError(msg)
+
+    def _assess_scopes(
+        self,
+        scopes: dict[str, str],
+        validation_scopes: dict[str, str],
+    ) -> None:
+        """
+        Validate if the scopes match the required scopes.
+
+        Args:
+            scopes (dict[str, str]): scopes of the token to validate.
+            validation_scopes (dict[str, str]): required scopes.
+
+        Raises:
+            MissingRequiredScopeError: If the scopes do not match the required scopes.
+        """
+        for asset, level in validation_scopes.items():
+            msg = "Provided token has no scope for this action"
+            if asset not in scopes:
+                raise MissingRequiredScopeError(msg)
+            if scopes[asset] != level:
+                raise MissingRequiredScopeError(msg)
+
     async def verify_token(
         self,
         token: str,
         token_type: TokenType = TokenType.ACCESS,
+        required_scopes: ScopeModel | None = None,
     ) -> dict[str, Any]:
         """
         Verify token validity and check if it has been revoked
@@ -62,8 +131,26 @@ class JWTHandler:
                 },
             )
 
-            # if not present in payload, will raise an exception above
-            await TokenRepository.validate_jti(payload.get("jti"))
+            tk_scope, scopes = (
+                result
+                if (result := self.fetch_scopes(payload.get("scope"))) is not None
+                else (None, None)
+            )
+            self.validate_scopes(
+                token_type,
+                tk_scope,
+                scopes,
+                required_scopes,
+            )
+
+            if token_type == TokenType.REFRESH:
+                result = await TokenRepository.validate_refresh_token(
+                    payload.get("jti"),
+                )
+                if not result:
+                    raise TokenRevokedError  # noqa: TRY301
+            else:
+                await TokenRepository.validate_jti(payload.get("jti"))
 
         except jwt.ImmatureSignatureError:
             raise HTTPException(  # noqa: B904
@@ -94,6 +181,12 @@ class JWTHandler:
             raise HTTPException(  # noqa: B904
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except MissingRequiredScopeError as e:
+            raise HTTPException(  # noqa: B904
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"{e!s}",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         except TokenRevokedError:
@@ -130,7 +223,7 @@ class JWTHandler:
     async def create_access_token(  # noqa: PLR0913
         self,
         user_id: str,
-        scopes: list[str] | None = None,
+        scopes: ScopeModel | None = None,
         verified: bool = True,  # noqa: FBT001, FBT002
         issuer: str = st.BACKEND_URL,
         audience: list[str] = st.BACKEND_CORS_ORIGINS,
@@ -156,8 +249,6 @@ class JWTHandler:
         Returns:
             AccessTokenData: pydantic model with access and refresh tokens
         """
-        if scopes is None:
-            scopes = []
         tk_data = {
             "subject": user_id,
             "verified": verified,
@@ -170,7 +261,7 @@ class JWTHandler:
             TokenType.REFRESH,
             **tk_data,
             expires_delta=timedelta(seconds=st.REFRESH_TOKEN_EXPIRE),
-            scopes=[],
+            scopes=None,
         )
         refresh_expiration = now + timedelta(seconds=st.REFRESH_TOKEN_EXPIRE)
         refresh_token_model = TokenData(
@@ -248,7 +339,7 @@ class JWTHandler:
             TokenType.LIMITED,
             **tk_data,
             expires_delta=timedelta(seconds=st.LIMITED_TOKEN_EXPIRE),
-            scopes=[],
+            scopes=None,
         )
         expiration = datetime.now(UTC) + timedelta(seconds=st.LIMITED_TOKEN_EXPIRE)
         token_stored = await TokenRepository.store_jti(
@@ -300,7 +391,7 @@ class JWTHandler:
             TokenType.VERIFY,
             **tk_data,
             expires_delta=timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE),
-            scopes=[],
+            scopes=None,
         )
         expiration = datetime.now(UTC) + timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE)
         token_stored = await TokenRepository.store_jti(
@@ -354,7 +445,7 @@ class JWTHandler:
             TokenType.PASSWORD_RESET,
             **tk_data,
             expires_delta=timedelta(seconds=st.RESET_PASSWORD_TOKEN_EXPIRE),
-            scopes=[],
+            scopes=None,
         )
         expiration = datetime.now(UTC) + timedelta(
             seconds=st.RESET_PASSWORD_TOKEN_EXPIRE,
@@ -410,7 +501,7 @@ class JWTHandler:
             TokenType.ACTIVATE,
             **tk_data,
             expires_delta=timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE),
-            scopes=[],
+            scopes=None,
         )
         expiration = datetime.now(UTC) + timedelta(seconds=st.VERIFICATION_TOKEN_EXPIRE)
         token_stored = await TokenRepository.store_jti(
@@ -430,7 +521,7 @@ class JWTHandler:
         self,
         refresh_jti: str,
         user_id: str,
-        scopes: list[str] | None = None,
+        scopes: ScopeModel | None = None,
         verified: bool = True,  # noqa: FBT001, FBT002
         issuer: str = st.BACKEND_URL,
         audience: list[str] = st.BACKEND_CORS_ORIGINS,
@@ -479,9 +570,15 @@ class JWTHandler:
             role=role,
         )
 
-    def fetch_scopes(self, scope: str) -> dict[str, Any]:
+    def fetch_scopes(self, scope: str) -> tuple[str, ScopeModel] | None:
         """
         Fetches scopes from token
+
+        Args:
+            scope (str): The scope of the token
+
+        Returns:
+            tuple[str,ScopeModel]|None: The token scope and the scope model
         """
 
         def scope_to_dict(scopes: list[str], target_scope: str) -> dict[str, str]:
@@ -497,12 +594,11 @@ class JWTHandler:
             }
 
         if not scope:
-            return {}
+            return None
         scopes = scope.split(" ")
-        return {
-            "token_scope": scopes[0],
-            "read": scope_to_dict(scopes, "read"),
-            "create": scope_to_dict(scopes, "create"),
-            "update": scope_to_dict(scopes, "update"),
-            "delete": scope_to_dict(scopes, "delete"),
-        }
+        return scopes[0], ScopeModel(
+            read=scope_to_dict(scopes, "read"),
+            create=scope_to_dict(scopes, "create"),
+            update=scope_to_dict(scopes, "update"),
+            delete=scope_to_dict(scopes, "delete"),
+        )

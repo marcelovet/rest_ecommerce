@@ -10,7 +10,8 @@ from redis.asyncio.client import Redis
 from redis.exceptions import RedisError
 
 from app.core.config import settings as st
-from app.exceptions import TokenRevokedError
+
+from .exceptions import TokenRevokedError
 
 # Configure Token Repository logger
 logger = logging.getLogger("token_repository")

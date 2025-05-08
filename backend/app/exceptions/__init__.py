@@ -32,19 +32,6 @@ class UserServiceError(APIError):
     pass
 
 
-# JWT service errors
-class JWTServiceError(APIError):
-    pass
-
-
-class TokenRevokedError(JWTServiceError):
-    pass
-
-
-class TokenRepositoryError(JWTServiceError):
-    pass
-
-
 # Database errors
 class DatabaseError(APIError):
     pass

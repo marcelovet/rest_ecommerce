@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Any
 
 from app.core.config import settings
+from app.models.token import ScopeModel
 from app.models.token import TokenModel
 from app.models.token import TokenType
 from app.models.user import RoleEnum
@@ -80,7 +81,7 @@ class TokenFactory:
     def __call__(  # noqa: PLR0913
         self,
         subject: str,
-        scopes: list[str],
+        scopes: ScopeModel | None = None,
         verified: bool = False,  # noqa: FBT001, FBT002
         expires_delta: timedelta | None = None,
         issuer: str = settings.BACKEND_URL,
@@ -93,8 +94,9 @@ class TokenFactory:
         now = datetime.now(UTC)
         expire = now + expires_delta
 
-        base_scopes = self.tk_base["base_scopes"]
-        final_scope = base_scopes + scopes
+        final_scope = " ".join(self.tk_base["base_scopes"])
+        if scopes:
+            final_scope = self.tk_base["base_scopes"] + " " + scopes.fmt_scope()
         jti = self.create_jti(self.tk_base["type"], subject)
 
         return TokenModel(
@@ -104,7 +106,7 @@ class TokenFactory:
             iat=now,
             nbf=now,
             aud=audience,
-            scope=" ".join(final_scope),
+            scope=final_scope,
             verified=verified,
             role=role,
             jti=jti,
@@ -138,12 +140,12 @@ EXTENDED_CUSTOMER_SCOPES = [
 
 TokenFactory.register_token_type(
     TokenType.ACCESS,
-    ["access", *BASE_CUSTOMER_SCOPES, *EXTENDED_CUSTOMER_SCOPES],
+    ["access"],
 )
 
 TokenFactory.register_token_type(
     TokenType.LIMITED,
-    ["verification:status", *BASE_CUSTOMER_SCOPES],
+    ["verification:status"],
 )
 
 TokenFactory.register_token_type(
